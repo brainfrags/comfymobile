@@ -305,7 +305,28 @@ class GalleryViewModel : ViewModel() {
         val selected = getSelectedItems()
         clearSelection()
         viewModelScope.launch { repository.createFolder(folder) }
-        if (selected.isNotEmpty()) moveItems(selected, folder, R.string.msg_moved_to_album)
+        if (selected.isNotEmpty()) {
+            leaveOtherAlbums(selected, AlbumRepository.folderAlbumId(folder))
+            moveItems(selected, folder, R.string.msg_moved_to_album)
+        }
+    }
+
+    /**
+     * An image is in one album at a time: when it goes into [targetAlbumId], take it out of
+     * every other app-only album (by key and by prompt) and cancel a pending move of its
+     * prompt into another folder. Folder albums need nothing: the file itself moves.
+     */
+    private fun leaveOtherAlbums(items: List<GalleryItem>, targetAlbumId: String) {
+        if (items.isEmpty()) return
+        val keys = items.map { getItemKey(it) }.toSet()
+        val promptIds = items.map { it.promptId }.toSet()
+        updateAlbums { list ->
+            list.map { album ->
+                if (album.id == targetAlbumId) album
+                else album.copy(members = album.members - keys, prompts = album.prompts - promptIds)
+            }
+        }
+        repository.cancelPendingMoves(promptIds)
     }
 
     /** Rename an album; for a folder album its files are moved into the renamed folder. */
@@ -345,12 +366,16 @@ class GalleryViewModel : ViewModel() {
     fun addSelectedToAlbum(albumId: String) {
         val keys = _selectedItems.value
         if (keys.isEmpty()) return
+        val selected = getSelectedItems()
+        leaveOtherAlbums(selected, albumId)
         if (AlbumRepository.isFolder(albumId)) {
-            val selected = getSelectedItems()
             clearSelection()
             moveItems(selected, folderOf(albumId), R.string.msg_moved_to_album)
             return
         }
+        // Into an app-only album: a file in a folder album goes back to the output folder itself
+        val inFolders = selected.filter { it.type == "output" && it.subfolder.isNotEmpty() }
+        if (inFolders.isNotEmpty()) viewModelScope.launch { repository.moveToFolder(inFolders, "") }
         updateAlbums { list -> list.map { if (it.id == albumId) it.copy(members = it.members + keys) else it } }
         clearSelection()
         viewModelScope.launch { _events.emit(GalleryEvent.ShowToast(R.string.msg_added_to_album)) }

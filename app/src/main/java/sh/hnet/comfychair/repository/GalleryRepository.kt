@@ -537,6 +537,12 @@ class GalleryRepository private constructor() {
         updateLibrary { lib -> lib.copy(pendingMoves = lib.pendingMoves + (promptId to folder)) }
     }
 
+    /** Forget queued moves of these prompts (they were put into another album by hand). */
+    fun cancelPendingMoves(promptIds: Set<String>) {
+        if (_library.value.pendingMoves.keys.none { it in promptIds }) return
+        updateLibrary { lib -> lib.copy(pendingMoves = lib.pendingMoves - promptIds) }
+    }
+
     private var pendingMovesJob: Job? = null
 
     /** Move newly generated items into the album folder that was selected when they were queued. */
