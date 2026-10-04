@@ -732,4 +732,7 @@
     <string name="msg_duplicates_deleted">Duplicates deleted</string>
     <string name="msg_duplicates_need_extension">Install or update the ComfyMobile extension on the ComfyUI PC (and restart ComfyUI) to find duplicates</string>
     <string name="msg_duplicates_failed">Couldn\'t check for duplicates (no answer from the PC). Try again.</string>
+    <string name="album_sort_name">Name</string>
+    <string name="album_sort_recent">Recently added</string>
+    <string name="album_sort_count">Most images</string>
 </resources>

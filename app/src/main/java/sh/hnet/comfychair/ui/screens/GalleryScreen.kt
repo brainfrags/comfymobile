@@ -143,6 +143,9 @@ import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.zIndex
 import sh.hnet.comfychair.repository.AlbumRepository
+import sh.hnet.comfychair.viewmodel.AlbumSortOrder
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -568,6 +571,30 @@ fun GalleryScreen(
                             Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.gallery_edit_album))
                         }
                     } else if (showAlbumList) {
+                        // Album list order
+                        Box {
+                            var showAlbumSortMenu by remember { mutableStateOf(false) }
+                            IconButton(onClick = { showAlbumSortMenu = true }) {
+                                Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = stringResource(R.string.gallery_sort))
+                            }
+                            DropdownMenu(expanded = showAlbumSortMenu, onDismissRequest = { showAlbumSortMenu = false }) {
+                                listOf(
+                                    AlbumSortOrder.NAME to R.string.album_sort_name,
+                                    AlbumSortOrder.RECENT to R.string.album_sort_recent,
+                                    AlbumSortOrder.COUNT to R.string.album_sort_count,
+                                    AlbumSortOrder.CUSTOM to R.string.gallery_sort_custom
+                                ).forEach { (order, labelRes) ->
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(labelRes)) },
+                                        onClick = {
+                                            galleryViewModel.setAlbumSortOrder(order)
+                                            showAlbumSortMenu = false
+                                        },
+                                        trailingIcon = { if (uiState.albumSortOrder == order) Icon(Icons.Default.Check, contentDescription = null) }
+                                    )
+                                }
+                            }
+                        }
                         IconButton(onClick = { showNewAlbumDialog = true }) {
                             Icon(Icons.Default.CreateNewFolder, contentDescription = stringResource(R.string.gallery_new_album))
                         }
@@ -603,7 +630,9 @@ fun GalleryScreen(
                 counts = uiState.albumCounts,
                 covers = uiState.albumCovers,
                 onOpen = { galleryViewModel.selectAlbum(it) },
-                onNewAlbum = { showNewAlbumDialog = true }
+                onNewAlbum = { showNewAlbumDialog = true },
+                onReorderStart = { galleryViewModel.beginAlbumReorder() },
+                onMove = { from, to -> galleryViewModel.moveAlbum(from, to) }
             )
         } else {
         PullToRefreshBox(
@@ -1012,19 +1041,77 @@ private fun AlbumGrid(
     counts: Map<String, Int>,
     covers: Map<String, GalleryItem>,
     onOpen: (String) -> Unit,
-    onNewAlbum: () -> Unit
+    onNewAlbum: () -> Unit,
+    onReorderStart: () -> Unit,
+    onMove: (fromId: String, toId: String) -> Unit
 ) {
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+    val gridState = rememberLazyGridState()
+
+    // Hold and drag an album to move it; the dragged album follows the finger
+    val bounds = remember { HashMap<String, Rect>() }
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var dragPosition by remember { mutableStateOf(Offset.Zero) }
+    var grabOffset by remember { mutableStateOf(Offset.Zero) }
+    fun albumAt(pos: Offset): String? = gridState.layoutInfo.visibleItemsInfo
+        .mapNotNull { it.key as? String }
+        .firstOrNull { id -> bounds[id]?.contains(pos) == true }
+
     LazyVerticalGrid(
         columns = GridCells.Adaptive(150.dp),
+        state = gridState,
         contentPadding = PaddingValues(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { pos ->
+                        val id = albumAt(pos) ?: return@detectDragGesturesAfterLongPress
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onReorderStart()
+                        draggingId = id
+                        dragPosition = pos
+                        grabOffset = pos - (bounds[id]?.topLeft ?: pos)
+                    },
+                    onDrag = { change, amount ->
+                        val from = draggingId ?: return@detectDragGesturesAfterLongPress
+                        change.consume()
+                        dragPosition += amount
+                        val target = albumAt(dragPosition)
+                        if (target != null && target != from) {
+                            // Keep the scroll position when the first visible album moves
+                            val first = gridState.layoutInfo.visibleItemsInfo.firstOrNull()?.key
+                            if (first == from || first == target) {
+                                gridState.requestScrollToItem(gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+                            }
+                            onMove(from, target)
+                        }
+                    },
+                    onDragEnd = { draggingId = null },
+                    onDragCancel = { draggingId = null }
+                )
+            }
     ) {
         gridItemsIndexed(albums, key = { _, album -> album.id }) { _, album ->
+            val isDragging = album.id == draggingId
             Column(
                 modifier = Modifier
+                    .then(if (isDragging) Modifier.zIndex(1f) else Modifier.animateItem())
+                    .onGloballyPositioned { bounds[album.id] = it.boundsInParent() }
+                    .graphicsLayer {
+                        if (isDragging) {
+                            bounds[album.id]?.let { b ->
+                                translationX = dragPosition.x - grabOffset.x - b.left
+                                translationY = dragPosition.y - grabOffset.y - b.top
+                            }
+                            scaleX = 1.05f
+                            scaleY = 1.05f
+                            shadowElevation = 12.dp.toPx()
+                        }
+                    }
                     .clip(MaterialTheme.shapes.medium)
                     .clickable { onOpen(album.id) }
             ) {

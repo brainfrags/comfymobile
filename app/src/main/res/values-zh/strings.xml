@@ -703,4 +703,7 @@
     <string name="msg_duplicates_deleted">已删除重复图片</string>
     <string name="msg_duplicates_need_extension">请在 ComfyUI 电脑上安装或更新 ComfyMobile 扩展（并重启 ComfyUI）以查找重复图片</string>
     <string name="msg_duplicates_failed">无法检查重复图片（电脑无响应）。请重试。</string>
+    <string name="album_sort_name">名称</string>
+    <string name="album_sort_recent">最近添加</string>
+    <string name="album_sort_count">图片最多</string>
 </resources>

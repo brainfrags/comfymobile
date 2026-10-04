@@ -703,4 +703,7 @@
     <string name="msg_duplicates_deleted">Usunięto duplikaty</string>
     <string name="msg_duplicates_need_extension">Zainstaluj lub zaktualizuj rozszerzenie ComfyMobile na komputerze z ComfyUI (i uruchom ComfyUI ponownie), aby wyszukać duplikaty</string>
     <string name="msg_duplicates_failed">Nie udało się sprawdzić duplikatów (brak odpowiedzi z komputera). Spróbuj ponownie.</string>
+    <string name="album_sort_name">Nazwa</string>
+    <string name="album_sort_recent">Ostatnio dodane</string>
+    <string name="album_sort_count">Najwięcej obrazów</string>
 </resources>

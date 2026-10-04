@@ -281,6 +281,21 @@ object AppSettings {
             .apply()
     }
 
+    private const val KEY_ALBUM_SORT_ORDER = "gallery_album_sort_order"
+
+    /** Album list sort order name (see AlbumSortOrder). */
+    fun getAlbumSortOrder(context: Context): String? {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_ALBUM_SORT_ORDER, null)
+    }
+
+    fun setAlbumSortOrder(context: Context, order: String) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_ALBUM_SORT_ORDER, order)
+            .apply()
+    }
+
     /** Gallery sort order name (see GallerySortOrder). */
     fun getGallerySortOrder(context: Context): String? {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

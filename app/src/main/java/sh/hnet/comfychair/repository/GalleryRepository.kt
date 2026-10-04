@@ -623,6 +623,21 @@ class GalleryRepository private constructor() {
         }
     }
 
+    /** Save a custom album order (album ids, top first). */
+    fun setAlbumOrder(order: List<String>) {
+        updateLibrary { lib -> lib.copy(albumOrder = order) }
+    }
+
+    /** Keep an album's place (and cover) when its id changes (folder album renamed). */
+    fun renameAlbumId(oldId: String, newId: String) {
+        updateLibrary { lib ->
+            lib.copy(
+                albumOrder = lib.albumOrder.map { if (it == oldId) newId else it },
+                covers = lib.covers[oldId]?.let { (lib.covers - oldId) + (newId to it) } ?: lib.covers
+            )
+        }
+    }
+
     /** Choose an album's cover (file id), or null to use its first item. */
     fun setAlbumCover(albumId: String, fileId: String?) {
         updateLibrary { lib ->

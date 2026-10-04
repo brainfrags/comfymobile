@@ -703,4 +703,7 @@
     <string name="msg_duplicates_deleted">Doublons supprimés</string>
     <string name="msg_duplicates_need_extension">Installez ou mettez à jour l\'extension ComfyMobile sur le PC ComfyUI (et redémarrez ComfyUI) pour trouver les doublons</string>
     <string name="msg_duplicates_failed">Impossible de rechercher les doublons (pas de réponse du PC). Réessayez.</string>
+    <string name="album_sort_name">Nom</string>
+    <string name="album_sort_recent">Ajout récent</string>
+    <string name="album_sort_count">Le plus d\'images</string>
 </resources>

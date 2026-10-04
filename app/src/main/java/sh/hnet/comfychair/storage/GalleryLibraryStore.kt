@@ -16,6 +16,7 @@ import java.io.File
  *   relative to the output folder), so history items still find their file
  * - folders: album folders created in the app (shown even while empty)
  * - covers: album cover chosen by the user (album id -> file id)
+ * - albumOrder: custom album order set by drag and drop (album ids, first = top)
  * - pendingMoves: prompts generated while a folder album was selected (prompt id -> folder);
  *   their files are moved into the folder once they appear
  *
@@ -31,7 +32,8 @@ data class GalleryLibrary(
     val moves: Map<String, String> = emptyMap(),
     val folders: Set<String> = emptySet(),
     val pendingMoves: Map<String, String> = emptyMap(),
-    val covers: Map<String, String> = emptyMap()
+    val covers: Map<String, String> = emptyMap(),
+    val albumOrder: List<String> = emptyList()
 )
 
 object GalleryLibraryStore {
@@ -67,7 +69,9 @@ object GalleryLibraryStore {
             o.optJSONObject("pendingMoves")?.let { m -> m.keys().forEach { k -> pendingMoves[k] = m.optString(k) } }
             val covers = mutableMapOf<String, String>()
             o.optJSONObject("covers")?.let { m -> m.keys().forEach { k -> covers[k] = m.optString(k) } }
-            GalleryLibrary(trash, purged, order, moves, folders, pendingMoves, covers)
+            val albumOrder = o.optJSONArray("albumOrder")?.let { a -> (0 until a.length()).map { a.getString(it) } }
+                ?: emptyList()
+            GalleryLibrary(trash, purged, order, moves, folders, pendingMoves, covers, albumOrder)
         } catch (e: Exception) {
             DebugLogger.e(TAG, "Failed to load library: ${e.message}")
             GalleryLibrary()
@@ -84,6 +88,7 @@ object GalleryLibraryStore {
                 put("folders", JSONArray(library.folders.toList()))
                 put("pendingMoves", JSONObject().apply { library.pendingMoves.forEach { (k, v) -> put(k, v) } })
                 put("covers", JSONObject().apply { library.covers.forEach { (k, v) -> put(k, v) } })
+                put("albumOrder", JSONArray(library.albumOrder))
             }
             val f = file(context, serverId)
             val tmp = File(f.parentFile, "$FILE.tmp")

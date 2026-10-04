@@ -703,4 +703,7 @@
     <string name="msg_duplicates_deleted">Duplicados eliminados</string>
     <string name="msg_duplicates_need_extension">Instala o actualiza la extensión ComfyMobile en el PC de ComfyUI (y reinicia ComfyUI) para buscar duplicados</string>
     <string name="msg_duplicates_failed">No se pudieron buscar duplicados (el PC no responde). Inténtalo de nuevo.</string>
+    <string name="album_sort_name">Nombre</string>
+    <string name="album_sort_recent">Añadido recientemente</string>
+    <string name="album_sort_count">Más imágenes</string>
 </resources>
