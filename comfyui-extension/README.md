@@ -9,6 +9,10 @@ the PC running ComfyUI:
 
 1. Copy the `comfymobile_files` folder into `ComfyUI/custom_nodes/`
    (copying this whole `comfyui-extension` folder there works too).
+   **ComfyUI Desktop** loads custom nodes from its own install folder, not from the
+   folder you picked for models/output. On Windows that is
+   `%LOCALAPPDATA%\Comfy-Desktop\ComfyUI-Installs\ComfyUI\ComfyUI\custom_nodes`
+   (the startup log's "Import times for custom nodes" list shows the folder in use).
 2. Restart ComfyUI. The console shows
    `[ComfyMobile] file operations enabled: /comfymobile/output/*`.
 3. Check: opening `http://<PC address>:8188/comfymobile/output/list` in a browser shows a
