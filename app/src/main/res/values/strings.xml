@@ -726,4 +726,9 @@
     <string name="gallery_sort_custom">Custom (hold and drag)</string>
     <string name="gallery_set_cover">Set as album cover</string>
     <string name="msg_album_cover_set">Album cover set</string>
+    <string name="gallery_clean_duplicates">Clean up duplicates</string>
+    <string name="gallery_clean_duplicates_confirm">Delete %d images in the output folder that are also in an album? The album copies are kept. This deletes the files on the PC.</string>
+    <string name="msg_no_duplicates">No duplicates between the output folder and albums</string>
+    <string name="msg_duplicates_deleted">Duplicates deleted</string>
+    <string name="msg_duplicates_need_extension">Install the ComfyMobile extension on the ComfyUI PC to find duplicates</string>
 </resources>

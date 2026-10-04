@@ -697,4 +697,9 @@
     <string name="gallery_sort_custom">Własna (przytrzymaj i przeciągnij)</string>
     <string name="gallery_set_cover">Ustaw jako okładkę albumu</string>
     <string name="msg_album_cover_set">Ustawiono okładkę albumu</string>
+    <string name="gallery_clean_duplicates">Usuń duplikaty</string>
+    <string name="gallery_clean_duplicates_confirm">Usunąć obrazy z folderu output, które są też w albumie (%d)? Kopie w albumach zostaną zachowane. Pliki zostaną usunięte z komputera.</string>
+    <string name="msg_no_duplicates">Brak duplikatów między folderem output a albumami</string>
+    <string name="msg_duplicates_deleted">Usunięto duplikaty</string>
+    <string name="msg_duplicates_need_extension">Zainstaluj rozszerzenie ComfyMobile na komputerze z ComfyUI, aby wyszukać duplikaty</string>
 </resources>

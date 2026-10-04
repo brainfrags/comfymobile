@@ -130,6 +130,7 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import sh.hnet.comfychair.ui.components.gallerySelectGestures
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Folder
@@ -521,6 +522,14 @@ fun GalleryScreen(
                                     enabled = uiState.items.isNotEmpty(),
                                     leadingIcon = { Icon(Icons.Default.Slideshow, contentDescription = null) }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.gallery_clean_duplicates)) },
+                                    onClick = {
+                                        showViewMenu = false
+                                        galleryViewModel.findDuplicates()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.CleaningServices, contentDescription = null) }
+                                )
                                 HorizontalDivider()
                                 GalleryViewMode.entries.forEach { mode ->
                                     DropdownMenuItem(
@@ -808,6 +817,15 @@ fun GalleryScreen(
                 showAddToAlbumDialog = false
             },
             onDismiss = { showAddToAlbumDialog = false }
+        )
+    }
+
+    uiState.rootDuplicates?.let { duplicates ->
+        ConfirmDeleteDialog(
+            title = stringResource(R.string.gallery_clean_duplicates),
+            message = stringResource(R.string.gallery_clean_duplicates_confirm, duplicates.size),
+            onConfirm = { galleryViewModel.deleteDuplicates() },
+            onDismiss = { galleryViewModel.dismissDuplicates() }
         )
     }
 

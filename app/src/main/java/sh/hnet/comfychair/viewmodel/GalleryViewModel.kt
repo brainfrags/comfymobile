@@ -119,6 +119,8 @@ data class GalleryUiState(
     val selectedItems: Set<String> = emptySet(), // Set of "${promptId}_${filename}" keys
     val isSelectionMode: Boolean = false,
     val trashCount: Int = 0,
+    /** Root copies of images that are also in an album, waiting for the user to confirm deleting them */
+    val rootDuplicates: List<Pair<String, String>>? = null,
     /** Files are being moved between album folders */
     val isMoving: Boolean = false
 ) {
@@ -161,7 +163,8 @@ class GalleryViewModel : ViewModel() {
         val viewMode: GalleryViewMode = GalleryViewMode.GRID_2,
         val sortOrder: GallerySortOrder = GallerySortOrder.NEWEST,
         val section: GallerySection = GallerySection.PHOTOS,
-        val isMoving: Boolean = false
+        val isMoving: Boolean = false,
+        val rootDuplicates: List<Pair<String, String>>? = null
     )
     private val _viewState = MutableStateFlow(ViewState())
     private var appContext: Context? = null
@@ -220,6 +223,7 @@ class GalleryViewModel : ViewModel() {
                     selectedItems = selectedItems,
                     isSelectionMode = isSelectionMode,
                     trashCount = trashed.size,
+                    rootDuplicates = view.rootDuplicates,
                     isMoving = view.isMoving
                 )
             }.collect { state ->
@@ -390,6 +394,43 @@ class GalleryViewModel : ViewModel() {
         updateAlbums { list -> list.map { if (it.id == albumId) it.copy(members = it.members + keys) else it } }
         clearSelection()
         viewModelScope.launch { _events.emit(GalleryEvent.ShowToast(R.string.msg_added_to_album)) }
+    }
+
+    // Duplicate cleanup
+
+    /** Look for images in the output folder itself that are also in an album; asks to confirm. */
+    fun findDuplicates() {
+        viewModelScope.launch {
+            _viewState.value = _viewState.value.copy(isMoving = true)
+            val found = try { repository.findRootDuplicates() } finally {
+                _viewState.value = _viewState.value.copy(isMoving = false)
+            }
+            when {
+                found == null -> _events.emit(GalleryEvent.ShowToast(R.string.msg_duplicates_need_extension))
+                found.isEmpty() -> _events.emit(GalleryEvent.ShowToast(R.string.msg_no_duplicates))
+                else -> _viewState.value = _viewState.value.copy(rootDuplicates = found)
+            }
+        }
+    }
+
+    fun dismissDuplicates() {
+        _viewState.value = _viewState.value.copy(rootDuplicates = null)
+    }
+
+    /** Delete the root copies found by [findDuplicates]; the album copies stay. */
+    fun deleteDuplicates() {
+        val duplicates = _viewState.value.rootDuplicates ?: return
+        _viewState.value = _viewState.value.copy(rootDuplicates = null, isMoving = true)
+        viewModelScope.launch {
+            try {
+                val deleted = repository.deleteRootDuplicates(duplicates)
+                _events.emit(
+                    GalleryEvent.ShowToast(if (deleted == duplicates.size) R.string.msg_duplicates_deleted else R.string.msg_some_items_failed_to_delete)
+                )
+            } finally {
+                _viewState.value = _viewState.value.copy(isMoving = false)
+            }
+        }
     }
 
     /** Use the (one) selected item as the cover of [albumId]. */

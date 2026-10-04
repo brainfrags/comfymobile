@@ -540,6 +540,56 @@ class GalleryRepository private constructor() {
         updateLibrary { lib -> lib.copy(pendingMoves = lib.pendingMoves + (promptId to folder)) }
     }
 
+    /**
+     * Files in the output folder itself that also exist (same content) in an album folder.
+     * Pairs of (root path, album copy that is kept). Null when the server can't compare
+     * files (no ComfyMobile extension).
+     */
+    suspend fun findRootDuplicates(): List<Pair<String, String>>? {
+        val client = comfyUIClient ?: return null
+        val groups = withContext(Dispatchers.IO) { client.findOutputDuplicates() } ?: return null
+        return groups.flatMap { group ->
+            val inAlbums = group.filter { '/' in it }
+            val inRoot = group.filter { '/' !in it }
+            val keep = inAlbums.firstOrNull() ?: return@flatMap emptyList()
+            inRoot.map { it to keep }
+        }
+    }
+
+    /**
+     * Delete root copies found by [findRootDuplicates]. An image's generation info stays
+     * with the album copy that is kept.
+     * @return Number of files deleted
+     */
+    suspend fun deleteRootDuplicates(duplicates: List<Pair<String, String>>): Int {
+        val client = comfyUIClient ?: return 0
+        if (duplicates.isEmpty()) return 0
+        // History items that point at a root copy now point at the kept copy
+        val rootToKeep = duplicates.associate { (root, keep) -> GalleryLibraryStore.outputFileId(root) to keep }
+        val historyIds = synchronized(stateLock) {
+            rawItems.filter { !isOutputFilePromptId(it.promptId) }.map { GalleryLibraryStore.fileId(it) }.toSet()
+        }
+        updateLibrary { lib ->
+            val moves = lib.moves.toMutableMap()
+            for ((rootId, keep) in rootToKeep) {
+                val originalId = moves.entries.firstOrNull { GalleryLibraryStore.outputFileId(it.value) == rootId }?.key
+                    ?: rootId.takeIf { it in historyIds }
+                    ?: continue
+                moves[originalId] = keep
+            }
+            lib.copy(moves = moves)
+        }
+        val deleted = withContext(Dispatchers.IO) { client.deleteOutputFiles(duplicates.map { it.first }) }
+        // Gone from disk: drop the root listing right away (a refresh confirms it)
+        val deletedIds = deleted.map { GalleryLibraryStore.outputFileId(it) }.toSet()
+        synchronized(stateLock) {
+            rawItems = rawItems.filterNot { isOutputFilePromptId(it.promptId) && GalleryLibraryStore.fileId(it) in deletedIds }
+            publish()
+        }
+        refresh()
+        return deleted.size
+    }
+
     /** Choose an album's cover (file id), or null to use its first item. */
     fun setAlbumCover(albumId: String, fileId: String?) {
         updateLibrary { lib ->

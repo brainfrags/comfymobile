@@ -9,6 +9,8 @@ are real subfolders of the output folder:
   POST /comfymobile/output/mkdir   {"path": "album"}
   POST /comfymobile/output/move    {"items": [{"type": "output", "path": "a.png"}], "to": "album"}
   POST /comfymobile/output/rmdir   {"path": "album"}   (only removes an empty folder)
+  GET  /comfymobile/output/duplicates -> {"groups": [["a.png", "album/a.png"], ...]} (same content)
+  POST /comfymobile/output/delete  {"paths": ["a.png"]}
 
 All paths are relative to the output folder (or the temp folder for "type": "temp")
 and can't point outside it.
@@ -17,6 +19,7 @@ Install: copy this folder into ComfyUI/custom_nodes/ and restart ComfyUI.
 """
 
 import asyncio
+import hashlib
 import os
 import shutil
 
@@ -147,6 +150,66 @@ async def move_files(request):
         except Exception as e:
             failed.append({"type": dir_type, "from": rel, "error": str(e)})
     return web.json_response({"moved": moved, "failed": failed})
+
+
+def _file_hash(path):
+    h = hashlib.blake2b(digest_size=20)
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _find_duplicates():
+    """Groups (2+ paths) of media files in the output tree with identical content."""
+    base = _base()
+    by_size = {}
+    for root, dirs, names in os.walk(base):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for name in names:
+            if name.startswith(".") or os.path.splitext(name)[1].lower() not in MEDIA_EXTENSIONS:
+                continue
+            path = os.path.join(root, name)
+            try:
+                by_size.setdefault(os.path.getsize(path), []).append(path)
+            except OSError:
+                continue
+    groups = []
+    for paths in by_size.values():
+        if len(paths) < 2:
+            continue
+        by_hash = {}
+        for path in paths:
+            try:
+                by_hash.setdefault(_file_hash(path), []).append(_rel(base, path))
+            except OSError:
+                continue
+        groups.extend(sorted(g) for g in by_hash.values() if len(g) > 1)
+    return {"groups": groups}
+
+
+@routes.get("/comfymobile/output/duplicates")
+async def find_duplicates(request):
+    result = await asyncio.get_running_loop().run_in_executor(None, _find_duplicates)
+    return web.json_response(result)
+
+
+@routes.post("/comfymobile/output/delete")
+async def delete_files(request):
+    """Delete files from the output folder (used to remove duplicates)."""
+    body = await request.json()
+    base = _base()
+    deleted, failed = [], []
+    for rel in body.get("paths", []):
+        try:
+            path = _resolve(base, rel)
+            if path == base or not os.path.isfile(path):
+                raise FileNotFoundError(rel)
+            os.remove(path)
+            deleted.append(rel)
+        except Exception as e:
+            failed.append({"path": rel, "error": str(e)})
+    return web.json_response({"deleted": deleted, "failed": failed})
 
 
 @routes.post("/comfymobile/output/rmdir")

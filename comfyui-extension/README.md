@@ -23,6 +23,8 @@ It adds these routes (paths are always kept inside the output folder):
 | `POST /comfymobile/output/mkdir` | Create a subfolder |
 | `POST /comfymobile/output/move` | Move files into a subfolder (renamed as `name (1).png` on a clash) |
 | `POST /comfymobile/output/rmdir` | Remove a subfolder if it is empty |
+| `GET /comfymobile/output/duplicates` | Groups of files with identical content (for "Clean up duplicates") |
+| `POST /comfymobile/output/delete` | Delete files (the root copies of duplicates) |
 
 Without the extension the app still works, with limits: subfolders are only found through
 the history (or the assets API with `--enable-assets`), and "moving" copies the file into the

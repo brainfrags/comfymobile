@@ -1596,6 +1596,34 @@ class ComfyUIClient(
     }
 
     /**
+     * Groups of output files with identical content (paths relative to the output folder).
+     * Needs the ComfyMobile extension. Blocking.
+     */
+    fun findOutputDuplicates(): List<List<String>>? {
+        val baseUrl = getBaseUrl() ?: return null
+        val body = getJsonBlocking("$baseUrl/comfymobile/output/duplicates") ?: return null
+        return try {
+            val groups = JSONObject(body).optJSONArray("groups") ?: return emptyList()
+            (0 until groups.length()).mapNotNull { i ->
+                val g = groups.optJSONArray(i) ?: return@mapNotNull null
+                (0 until g.length()).map { g.getString(it) }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Delete files from the output folder (needs the ComfyMobile extension). Blocking. */
+    fun deleteOutputFiles(paths: List<String>): Set<String> {
+        val response = postJsonBlocking(
+            "/comfymobile/output/delete",
+            JSONObject().put("paths", org.json.JSONArray(paths))
+        ) ?: return emptySet()
+        val deleted = response.optJSONArray("deleted") ?: return emptySet()
+        return (0 until deleted.length()).map { deleted.getString(it) }.toSet()
+    }
+
+    /**
      * Save a file into the output folder through ComfyUI's upload API (type=output), which
      * creates the subfolder if needed and renames on a name clash. Blocking.
      *

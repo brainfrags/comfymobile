@@ -697,4 +697,9 @@
     <string name="gallery_sort_custom">Personalizado (mantén y arrastra)</string>
     <string name="gallery_set_cover">Usar como portada del álbum</string>
     <string name="msg_album_cover_set">Portada del álbum establecida</string>
+    <string name="gallery_clean_duplicates">Limpiar duplicados</string>
+    <string name="gallery_clean_duplicates_confirm">¿Eliminar %d imágenes de la carpeta output que también están en un álbum? Las copias de los álbumes se conservan. Los archivos se eliminan del PC.</string>
+    <string name="msg_no_duplicates">No hay duplicados entre la carpeta output y los álbumes</string>
+    <string name="msg_duplicates_deleted">Duplicados eliminados</string>
+    <string name="msg_duplicates_need_extension">Instala la extensión ComfyMobile en el PC de ComfyUI para buscar duplicados</string>
 </resources>
