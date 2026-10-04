@@ -509,14 +509,28 @@ class GalleryRepository private constructor() {
             }
         }
 
-        val copied = !client.hasFileOps
+        recordMoves(newPaths, copied = !client.hasFileOps)
+        // Thumbnails and copies are keyed by name; refresh so the new location is listed
+        refresh()
+        return toMove.size - newPaths.size
+    }
+
+    /**
+     * Remember where files went: [newPaths] maps each file's current id to its new path
+     * (relative to the output folder). Order, covers and the trash follow the file.
+     * [copied]: the original is still on the PC (hidden in the app).
+     */
+    private fun recordMoves(newPaths: Map<String, String>, copied: Boolean) {
+        if (newPaths.isEmpty()) return
         updateLibrary { lib ->
             val moves = lib.moves.toMutableMap()
             val order = lib.order.toMutableList()
             val purged = lib.purged.toMutableSet()
             val covers = lib.covers.toMutableMap()
+            val trash = lib.trash.toMutableMap()
             for ((currentId, newPath) in newPaths) {
                 val newId = GalleryLibraryStore.outputFileId(newPath)
+                if (newId == currentId) continue
                 // Keep the move keyed by the file's original id (what the history reports)
                 val originalId = moves.entries.firstOrNull { GalleryLibraryStore.outputFileId(it.value) == currentId }?.key
                     ?: currentId
@@ -526,14 +540,53 @@ class GalleryRepository private constructor() {
                 purged.remove(newId)
                 val i = order.indexOf(currentId)
                 if (i >= 0) order[i] = newId
-                // A cover follows its file
+                // A cover and a trashed state follow their file
                 covers.entries.filter { it.value == currentId }.forEach { it.setValue(newId) }
+                trash.remove(currentId)?.let { trash[newId] = it }
             }
-            lib.copy(moves = moves, order = order, purged = purged, covers = covers)
+            lib.copy(moves = moves, order = order, purged = purged, covers = covers, trash = trash)
         }
-        // Thumbnails and copies are keyed by name; refresh so the new location is listed
+    }
+
+    /** Every item (also trashed ones) whose file is in output subfolder [folder] or below it. */
+    private fun itemsInFolder(folder: String): List<GalleryItem> = synchronized(stateLock) {
+        allItems.filter { it.type == "output" && (it.subfolder == folder || it.subfolder.startsWith("$folder/")) }
+    }
+
+    /**
+     * Move a whole album folder into [to] (rename; "" = back into the output folder itself).
+     * With the ComfyMobile extension the folder is moved on the PC with everything in it, so
+     * nothing is left behind; otherwise its images are moved one by one.
+     * @return Number of items that could not be moved
+     */
+    suspend fun moveFolder(from: String, to: String): Int {
+        val client = comfyUIClient ?: return 1
+        // Show the renamed album right away (empty until the files are moved)
+        if (to.isNotEmpty()) updateLibrary { lib -> lib.copy(folders = lib.folders + to) }
+        val failed: Int
+        if (client.hasFileOps) {
+            val moved = withContext(Dispatchers.IO) { client.moveOutputFolder(from, to) } ?: return 1
+            recordMoves(moved.entries.associate { (old, new) -> GalleryLibraryStore.outputFileId(old) to new }, copied = false)
+            failed = 0
+        } else {
+            failed = moveToFolder(itemsInFolder(from), to)
+        }
+        updateLibrary { lib ->
+            lib.copy(
+                folders = (lib.folders - from).let { if (to.isNotEmpty()) it + to else it },
+                pendingMoves = lib.pendingMoves.mapValues { (_, folder) -> if (folder == from) to else folder }
+                    .filterValues { it.isNotEmpty() }
+            )
+        }
+        _serverFolders.value = _serverFolders.value
+            .filterNot { it == from || it.startsWith("$from/") }
+            .let { if (to.isNotEmpty() && to !in it) it + to else it }
+        if (!client.hasFileOps) {
+            if (to.isNotEmpty()) createFolder(to)
+            removeFolder(from)
+        }
         refresh()
-        return toMove.size - newPaths.size
+        return failed
     }
 
     /** Move what [promptId] generates into [folder] once it shows up in the gallery. */

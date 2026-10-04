@@ -1652,6 +1652,25 @@ class ComfyUIClient(
     }
 
     /**
+     * Move a whole output subfolder (everything in it, also non-media files) into [to]
+     * ("" = the output folder itself); merges into an existing folder. Needs the ComfyMobile
+     * extension. Blocking.
+     * @return Old path -> new path (relative to the output folder) of each moved file,
+     *         or null if the request failed
+     */
+    fun moveOutputFolder(from: String, to: String): Map<String, String>? {
+        val response = postJsonBlocking(
+            "/comfymobile/output/move_folder",
+            JSONObject().put("from", from).put("to", to)
+        ) ?: return null
+        val moved = response.optJSONArray("moved") ?: return emptyMap()
+        return (0 until moved.length()).mapNotNull { i ->
+            val m = moved.optJSONObject(i) ?: return@mapNotNull null
+            m.optString("from") to m.optString("path")
+        }.toMap()
+    }
+
+    /**
      * Save a file into the output folder through ComfyUI's upload API (type=output), which
      * creates the subfolder if needed and renames on a name clash. Blocking.
      *

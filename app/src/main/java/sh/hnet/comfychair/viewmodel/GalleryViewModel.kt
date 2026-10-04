@@ -375,6 +375,18 @@ class GalleryViewModel : ViewModel() {
         }
     }
 
+    private fun runFolderMove(successMessage: Int, move: suspend () -> Int) {
+        viewModelScope.launch {
+            _viewState.value = _viewState.value.copy(isMoving = true)
+            try {
+                val failed = move()
+                _events.emit(GalleryEvent.ShowToast(if (failed == 0) successMessage else R.string.msg_some_items_failed_to_move))
+            } finally {
+                _viewState.value = _viewState.value.copy(isMoving = false)
+            }
+        }
+    }
+
     /**
      * Create an album: a subfolder of ComfyUI's output folder. If items are selected,
      * their files are moved into it.
@@ -415,13 +427,11 @@ class GalleryViewModel : ViewModel() {
             val newFolder = folderName(name)
             val oldFolder = folderOf(albumId)
             if (newFolder.isEmpty() || newFolder == oldFolder) return
-            val members = albumItems(albumId)
-            val wasOpen = AlbumRepository.currentAlbumId.value == albumId
-            viewModelScope.launch { repository.createFolder(newFolder) }
-            if (wasOpen) AlbumRepository.select(AlbumRepository.folderAlbumId(newFolder))
-            // Keep its place in a custom order and its cover (moveToFolder updates the cover's file id)
-            repository.renameAlbumId(albumId, AlbumRepository.folderAlbumId(newFolder))
-            moveItems(members, newFolder, R.string.msg_album_renamed) { repository.removeFolder(oldFolder) }
+            val newId = AlbumRepository.folderAlbumId(newFolder)
+            if (AlbumRepository.currentAlbumId.value == albumId) AlbumRepository.select(newId)
+            // Keep its place in a custom order and its cover
+            repository.renameAlbumId(albumId, newId)
+            runFolderMove(R.string.msg_album_renamed) { repository.moveFolder(oldFolder, newFolder) }
             return
         }
         val trimmed = name.trim()
@@ -436,9 +446,9 @@ class GalleryViewModel : ViewModel() {
     fun deleteAlbum(albumId: String) {
         if (AlbumRepository.isFolder(albumId)) {
             val folder = folderOf(albumId)
-            val members = albumItems(albumId)
             if (AlbumRepository.currentAlbumId.value == albumId) AlbumRepository.select(null)
-            moveItems(members, "", R.string.msg_album_deleted) { repository.removeFolder(folder) }
+            // Everything in the folder goes up one level (the output folder itself for an album)
+            runFolderMove(R.string.msg_album_deleted) { repository.moveFolder(folder, folder.substringBeforeLast('/', "")) }
             return
         }
         updateAlbums { list -> list.filterNot { it.id == albumId } }

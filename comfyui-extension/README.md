@@ -27,6 +27,7 @@ It adds these routes (paths are always kept inside the output folder):
 | `POST /comfymobile/output/mkdir` | Create a subfolder |
 | `POST /comfymobile/output/move` | Move files into a subfolder (renamed as `name (1).png` on a clash) |
 | `POST /comfymobile/output/rmdir` | Remove a subfolder if it is empty |
+| `POST /comfymobile/output/move_folder` | Move a whole folder (album rename / delete), merging into an existing one |
 | `GET /comfymobile/output/duplicates` | Groups of files with identical content (for "Clean up duplicates") |
 | `POST /comfymobile/output/delete` | Delete files (the root copies of duplicates) |
 

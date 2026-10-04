@@ -9,6 +9,7 @@ are real subfolders of the output folder:
   POST /comfymobile/output/mkdir   {"path": "album"}
   POST /comfymobile/output/move    {"items": [{"type": "output", "path": "a.png"}], "to": "album"}
   POST /comfymobile/output/rmdir   {"path": "album"}   (only removes an empty folder)
+  POST /comfymobile/output/move_folder {"from": "album", "to": "renamed"}  ("to": "" = output root)
   GET  /comfymobile/output/duplicates -> {"groups": [["a.png", "album/a.png"], ...]} (same content)
   POST /comfymobile/output/delete  {"paths": ["a.png"]}
 
@@ -238,6 +239,50 @@ async def delete_files(request):
         except Exception as e:
             failed.append({"path": rel, "error": str(e)})
     return web.json_response({"deleted": deleted, "failed": failed})
+
+
+def _move_tree(src_dir, dst_dir, base, moved):
+    """Move everything in src_dir into dst_dir (merging folders, renaming files on a clash),
+    then remove src_dir. Appends {"from", "path"} (paths relative to base) for every file."""
+    os.makedirs(dst_dir, exist_ok=True)
+    for name in os.listdir(src_dir):
+        src = os.path.join(src_dir, name)
+        if os.path.isdir(src) and not os.path.islink(src):
+            target = os.path.join(dst_dir, name)
+            if os.path.exists(target) and not os.path.isdir(target):
+                target = os.path.join(dst_dir, _free_name(dst_dir, name))
+            _move_tree(src, target, base, moved)
+        else:
+            dst = os.path.join(dst_dir, _free_name(dst_dir, name))
+            shutil.move(src, dst)
+            moved.append({"from": _rel(base, src), "path": _rel(base, dst)})
+    try:
+        os.rmdir(src_dir)
+    except OSError:
+        pass
+
+
+@routes.post("/comfymobile/output/move_folder")
+async def move_folder(request):
+    """Move a whole folder: {"from": "a", "to": "b"} renames a -> b (merging if b exists);
+    "to": "" moves its contents into the output folder itself."""
+    body = await request.json()
+    base = _base()
+    try:
+        src = _resolve(base, body.get("from"))
+        dst = _resolve(base, body.get("to"))
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    if src == base or not os.path.isdir(src):
+        return web.json_response({"error": "no such folder"}, status=400)
+    if os.path.commonpath((src, dst)) == src:
+        return web.json_response({"error": "cannot move a folder into itself"}, status=400)
+    moved = []
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, _move_tree, src, dst, base, moved)
+    except Exception as e:
+        return web.json_response({"moved": moved, "error": str(e)}, status=500)
+    return web.json_response({"moved": moved})
 
 
 @routes.post("/comfymobile/output/rmdir")
