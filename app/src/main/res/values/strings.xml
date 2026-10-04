@@ -730,5 +730,6 @@
     <string name="gallery_clean_duplicates_confirm">Delete %d images in the output folder that are also in an album? The album copies are kept. This deletes the files on the PC.</string>
     <string name="msg_no_duplicates">No duplicates between the output folder and albums</string>
     <string name="msg_duplicates_deleted">Duplicates deleted</string>
-    <string name="msg_duplicates_need_extension">Install the ComfyMobile extension on the ComfyUI PC to find duplicates</string>
+    <string name="msg_duplicates_need_extension">Install or update the ComfyMobile extension on the ComfyUI PC (and restart ComfyUI) to find duplicates</string>
+    <string name="msg_duplicates_failed">Couldn\'t check for duplicates (no answer from the PC). Try again.</string>
 </resources>

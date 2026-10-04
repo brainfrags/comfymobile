@@ -542,13 +542,13 @@ class GalleryRepository private constructor() {
 
     /**
      * Files in the output folder itself that also exist (same content) in an album folder.
-     * Pairs of (root path, album copy that is kept). Null when the server can't compare
-     * files (no ComfyMobile extension).
+     * [ComfyUIClient.DuplicatesResult.Found] holds pairs of (root path, album copy that is kept).
      */
-    suspend fun findRootDuplicates(): List<Pair<String, String>>? {
-        val client = comfyUIClient ?: return null
-        val groups = withContext(Dispatchers.IO) { client.findOutputDuplicates() } ?: return null
-        return groups.flatMap { group ->
+    suspend fun findRootDuplicates(): Pair<ComfyUIClient.DuplicatesResult, List<Pair<String, String>>> {
+        val client = comfyUIClient ?: return ComfyUIClient.DuplicatesResult.Failed to emptyList()
+        val result = withContext(Dispatchers.IO) { client.findOutputDuplicates() }
+        val groups = (result as? ComfyUIClient.DuplicatesResult.Found)?.groups ?: return result to emptyList()
+        return result to groups.flatMap { group ->
             val inAlbums = group.filter { '/' in it }
             val inRoot = group.filter { '/' !in it }
             val keep = inAlbums.firstOrNull() ?: return@flatMap emptyList()

@@ -699,5 +699,6 @@
     <string name="gallery_clean_duplicates_confirm">%d Bilder im Output-Ordner löschen, die auch in einem Album sind? Die Kopien in den Alben bleiben erhalten. Die Dateien werden auf dem PC gelöscht.</string>
     <string name="msg_no_duplicates">Keine Duplikate zwischen Output-Ordner und Alben</string>
     <string name="msg_duplicates_deleted">Duplikate gelöscht</string>
-    <string name="msg_duplicates_need_extension">Installiere die ComfyMobile-Erweiterung auf dem ComfyUI-PC, um Duplikate zu finden</string>
+    <string name="msg_duplicates_need_extension">Installiere oder aktualisiere die ComfyMobile-Erweiterung auf dem ComfyUI-PC (und starte ComfyUI neu), um Duplikate zu finden</string>
+    <string name="msg_duplicates_failed">Duplikate konnten nicht geprüft werden (keine Antwort vom PC). Versuche es erneut.</string>
 </resources>

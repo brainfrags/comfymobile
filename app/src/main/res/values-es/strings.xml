@@ -701,5 +701,6 @@
     <string name="gallery_clean_duplicates_confirm">¿Eliminar %d imágenes de la carpeta output que también están en un álbum? Las copias de los álbumes se conservan. Los archivos se eliminan del PC.</string>
     <string name="msg_no_duplicates">No hay duplicados entre la carpeta output y los álbumes</string>
     <string name="msg_duplicates_deleted">Duplicados eliminados</string>
-    <string name="msg_duplicates_need_extension">Instala la extensión ComfyMobile en el PC de ComfyUI para buscar duplicados</string>
+    <string name="msg_duplicates_need_extension">Instala o actualiza la extensión ComfyMobile en el PC de ComfyUI (y reinicia ComfyUI) para buscar duplicados</string>
+    <string name="msg_duplicates_failed">No se pudieron buscar duplicados (el PC no responde). Inténtalo de nuevo.</string>
 </resources>

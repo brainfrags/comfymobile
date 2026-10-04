@@ -168,16 +168,27 @@ async def move_files(request):
     return web.json_response({"moved": moved, "failed": failed})
 
 
-def _file_hash(path):
-    h = hashlib.blake2b(digest_size=20)
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+# (path, size, mtime) -> hash, so checking again only reads new or changed files
+_hash_cache = {}
+
+
+def _file_hash(path, size, mtime):
+    key = (path, size, mtime)
+    cached = _hash_cache.get(key)
+    if cached is None:
+        h = hashlib.blake2b(digest_size=20)
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        cached = _hash_cache[key] = h.hexdigest()
+    return cached
 
 
 def _find_duplicates():
-    """Groups (2+ paths) of media files in the output tree with identical content."""
+    """
+    Groups (2+ paths) of media files with identical content, where at least one copy is in
+    the output folder itself and one in a subfolder. Only files of the same size are read.
+    """
     base = _base()
     by_size = {}
     for root, dirs, names in _walk(base):
@@ -186,17 +197,19 @@ def _find_duplicates():
                 continue
             path = os.path.join(root, name)
             try:
-                by_size.setdefault(os.path.getsize(path), []).append(path)
+                st = os.stat(path)
             except OSError:
                 continue
+            by_size.setdefault(st.st_size, []).append((path, st.st_mtime))
     groups = []
-    for paths in by_size.values():
-        if len(paths) < 2:
+    for size, entries in by_size.items():
+        in_root = [e for e in entries if os.path.dirname(e[0]) == base]
+        if not in_root or len(in_root) == len(entries):
             continue
         by_hash = {}
-        for path in paths:
+        for path, mtime in entries:
             try:
-                by_hash.setdefault(_file_hash(path), []).append(_rel(base, path))
+                by_hash.setdefault(_file_hash(path, size, mtime), []).append(_rel(base, path))
             except OSError:
                 continue
         groups.extend(sorted(g) for g in by_hash.values() if len(g) > 1)

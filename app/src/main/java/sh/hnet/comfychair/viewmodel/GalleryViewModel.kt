@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import sh.hnet.comfychair.ComfyUIClient
 import sh.hnet.comfychair.R
 import sh.hnet.comfychair.cache.MediaCache
 import sh.hnet.comfychair.cache.MediaCacheKey
@@ -402,11 +403,14 @@ class GalleryViewModel : ViewModel() {
     fun findDuplicates() {
         viewModelScope.launch {
             _viewState.value = _viewState.value.copy(isMoving = true)
-            val found = try { repository.findRootDuplicates() } finally {
+            val (result, found) = try { repository.findRootDuplicates() } finally {
                 _viewState.value = _viewState.value.copy(isMoving = false)
             }
             when {
-                found == null -> _events.emit(GalleryEvent.ShowToast(R.string.msg_duplicates_need_extension))
+                result is ComfyUIClient.DuplicatesResult.NotInstalled ->
+                    _events.emit(GalleryEvent.ShowToast(R.string.msg_duplicates_need_extension))
+                result is ComfyUIClient.DuplicatesResult.Failed ->
+                    _events.emit(GalleryEvent.ShowToast(R.string.msg_duplicates_failed))
                 found.isEmpty() -> _events.emit(GalleryEvent.ShowToast(R.string.msg_no_duplicates))
                 else -> _viewState.value = _viewState.value.copy(rootDuplicates = found)
             }

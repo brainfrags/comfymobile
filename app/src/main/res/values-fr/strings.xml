@@ -701,5 +701,6 @@
     <string name="gallery_clean_duplicates_confirm">Supprimer %d images du dossier output qui sont aussi dans un album ? Les copies des albums sont conservées. Les fichiers sont supprimés du PC.</string>
     <string name="msg_no_duplicates">Aucun doublon entre le dossier output et les albums</string>
     <string name="msg_duplicates_deleted">Doublons supprimés</string>
-    <string name="msg_duplicates_need_extension">Installez l\'extension ComfyMobile sur le PC ComfyUI pour trouver les doublons</string>
+    <string name="msg_duplicates_need_extension">Installez ou mettez à jour l\'extension ComfyMobile sur le PC ComfyUI (et redémarrez ComfyUI) pour trouver les doublons</string>
+    <string name="msg_duplicates_failed">Impossible de rechercher les doublons (pas de réponse du PC). Réessayez.</string>
 </resources>

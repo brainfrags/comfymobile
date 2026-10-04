@@ -701,5 +701,6 @@
     <string name="gallery_clean_duplicates_confirm">删除 output 文件夹中也存在于相册里的 %d 张图片？相册中的副本会保留。文件将从电脑上删除。</string>
     <string name="msg_no_duplicates">output 文件夹与相册之间没有重复图片</string>
     <string name="msg_duplicates_deleted">已删除重复图片</string>
-    <string name="msg_duplicates_need_extension">请在 ComfyUI 电脑上安装 ComfyMobile 扩展以查找重复图片</string>
+    <string name="msg_duplicates_need_extension">请在 ComfyUI 电脑上安装或更新 ComfyMobile 扩展（并重启 ComfyUI）以查找重复图片</string>
+    <string name="msg_duplicates_failed">无法检查重复图片（电脑无响应）。请重试。</string>
 </resources>

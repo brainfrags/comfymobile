@@ -1476,12 +1476,28 @@ class ComfyUIClient(
     var hasFileOps: Boolean = false
         private set
 
-    private fun getJsonBlocking(url: String): String? = try {
-        httpClient.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+    /**
+     * For the ComfyMobile extension: listing, comparing and moving files of a big output
+     * folder can take much longer than the 10 s of [httpClient].
+     */
+    private val fileOpsClient by lazy { httpClient.newBuilder().readTimeout(5, TimeUnit.MINUTES).build() }
+
+    private fun getJsonBlocking(url: String, client: OkHttpClient = httpClient): String? = try {
+        client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
             if (response.isSuccessful) response.body?.string() else null
         }
     } catch (e: IOException) {
         null
+    }
+
+    /** HTTP status of a GET (0 if the server could not be reached), and its body when it succeeded. */
+    private fun getBlocking(url: String, client: OkHttpClient): Pair<Int, String?> = try {
+        client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+            response.code to (if (response.isSuccessful) response.body?.string() else null)
+        }
+    } catch (e: IOException) {
+        DebugLogger.w(TAG, "GET failed: ${e.message}")
+        0 to null
     }
 
     private fun postJsonBlocking(path: String, body: JSONObject): JSONObject? {
@@ -1491,7 +1507,7 @@ class ComfyUIClient(
                 .url("$baseUrl$path")
                 .post(body.toString().toRequestBody("application/json".toMediaType()))
                 .build()
-            httpClient.newCall(request).execute().use { response ->
+            fileOpsClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) JSONObject(response.body?.string() ?: "{}") else null
             }
         } catch (e: Exception) {
@@ -1516,7 +1532,7 @@ class ComfyUIClient(
         val baseUrl = getBaseUrl() ?: return null
 
         // ComfyMobile extension
-        getJsonBlocking("$baseUrl/comfymobile/output/list")?.let { body ->
+        getJsonBlocking("$baseUrl/comfymobile/output/list", fileOpsClient)?.let { body ->
             try {
                 val json = JSONObject(body)
                 val files = json.optJSONArray("files") ?: org.json.JSONArray()
@@ -1595,21 +1611,33 @@ class ComfyUIClient(
         }.toMap()
     }
 
+    /** Result of [findOutputDuplicates]. */
+    sealed class DuplicatesResult {
+        /** Groups of paths (relative to the output folder) with identical content */
+        data class Found(val groups: List<List<String>>) : DuplicatesResult()
+        /** The server has no (or an older) ComfyMobile extension */
+        data object NotInstalled : DuplicatesResult()
+        /** Not reachable, timed out or failed */
+        data object Failed : DuplicatesResult()
+    }
+
     /**
-     * Groups of output files with identical content (paths relative to the output folder).
-     * Needs the ComfyMobile extension. Blocking.
+     * Groups of output files with identical content. Needs the ComfyMobile extension.
+     * Blocking; can take a while for a big output folder.
      */
-    fun findOutputDuplicates(): List<List<String>>? {
-        val baseUrl = getBaseUrl() ?: return null
-        val body = getJsonBlocking("$baseUrl/comfymobile/output/duplicates") ?: return null
+    fun findOutputDuplicates(): DuplicatesResult {
+        val baseUrl = getBaseUrl() ?: return DuplicatesResult.Failed
+        val (code, body) = getBlocking("$baseUrl/comfymobile/output/duplicates", fileOpsClient)
+        if (code == 404) return DuplicatesResult.NotInstalled
+        if (body == null) return DuplicatesResult.Failed
         return try {
-            val groups = JSONObject(body).optJSONArray("groups") ?: return emptyList()
-            (0 until groups.length()).mapNotNull { i ->
+            val groups = JSONObject(body).optJSONArray("groups") ?: return DuplicatesResult.Found(emptyList())
+            DuplicatesResult.Found((0 until groups.length()).mapNotNull { i ->
                 val g = groups.optJSONArray(i) ?: return@mapNotNull null
                 (0 until g.length()).map { g.getString(it) }
-            }
+            })
         } catch (e: Exception) {
-            null
+            DuplicatesResult.Failed
         }
     }
 

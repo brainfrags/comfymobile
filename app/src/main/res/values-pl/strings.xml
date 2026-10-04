@@ -701,5 +701,6 @@
     <string name="gallery_clean_duplicates_confirm">Usunąć obrazy z folderu output, które są też w albumie (%d)? Kopie w albumach zostaną zachowane. Pliki zostaną usunięte z komputera.</string>
     <string name="msg_no_duplicates">Brak duplikatów między folderem output a albumami</string>
     <string name="msg_duplicates_deleted">Usunięto duplikaty</string>
-    <string name="msg_duplicates_need_extension">Zainstaluj rozszerzenie ComfyMobile na komputerze z ComfyUI, aby wyszukać duplikaty</string>
+    <string name="msg_duplicates_need_extension">Zainstaluj lub zaktualizuj rozszerzenie ComfyMobile na komputerze z ComfyUI (i uruchom ComfyUI ponownie), aby wyszukać duplikaty</string>
+    <string name="msg_duplicates_failed">Nie udało się sprawdzić duplikatów (brak odpowiedzi z komputera). Spróbuj ponownie.</string>
 </resources>
