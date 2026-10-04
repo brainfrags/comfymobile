@@ -30,8 +30,8 @@ from server import PromptServer
 
 VERSION = 1
 MEDIA_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
-    ".mp4", ".webm", ".mov", ".avi", ".mkv",
+    ".png", ".jpg", ".jpeg", ".jfif", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif", ".heic",
+    ".mp4", ".m4v", ".webm", ".mov", ".avi", ".mkv",
 }
 
 NODE_CLASS_MAPPINGS = {}
@@ -84,11 +84,27 @@ def _free_name(folder, name):
     return candidate
 
 
+def _walk(base):
+    """os.walk that also enters linked folders (symlinks, Windows junctions), once each."""
+    seen = set()
+    for root, dirs, names in os.walk(base, followlinks=True):
+        real = os.path.realpath(root)
+        if real in seen:
+            dirs[:] = []
+            continue
+        seen.add(real)
+        # Skip hidden folders and links back to a folder already listed
+        dirs[:] = [
+            d for d in dirs
+            if not d.startswith(".") and os.path.realpath(os.path.join(root, d)) not in seen
+        ]
+        yield root, dirs, names
+
+
 def _scan():
     base = _base()
     files, folders = [], []
-    for root, dirs, names in os.walk(base):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
+    for root, dirs, names in _walk(base):
         folders.extend(_rel(base, os.path.join(root, d)) for d in dirs)
         for name in names:
             if name.startswith(".") or os.path.splitext(name)[1].lower() not in MEDIA_EXTENSIONS:
@@ -164,8 +180,7 @@ def _find_duplicates():
     """Groups (2+ paths) of media files in the output tree with identical content."""
     base = _base()
     by_size = {}
-    for root, dirs, names in os.walk(base):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
+    for root, dirs, names in _walk(base):
         for name in names:
             if name.startswith(".") or os.path.splitext(name)[1].lower() not in MEDIA_EXTENSIONS:
                 continue

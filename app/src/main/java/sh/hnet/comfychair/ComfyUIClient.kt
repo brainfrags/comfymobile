@@ -1655,7 +1655,10 @@ class ComfyUIClient(
 
     private fun isMediaFile(name: String): Boolean {
         val ext = name.substringAfterLast('.', "").lowercase()
-        return ext in setOf("png", "jpg", "jpeg", "webp", "gif", "bmp", "mp4", "webm", "mov", "avi", "mkv")
+        return ext in setOf(
+            "png", "jpg", "jpeg", "jfif", "webp", "gif", "bmp", "tif", "tiff", "avif", "heic",
+            "mp4", "m4v", "webm", "mov", "avi", "mkv"
+        )
     }
 
     fun deleteHistoryItem(promptId: String, callback: (success: Boolean) -> Unit) {

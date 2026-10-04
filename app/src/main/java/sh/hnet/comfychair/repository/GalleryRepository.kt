@@ -104,7 +104,7 @@ class GalleryRepository private constructor() {
         @Volatile
         private var instance: GalleryRepository? = null
 
-        private val VIDEO_EXTENSIONS = listOf(".mp4", ".webm", ".gif", ".avi", ".mov")
+        private val VIDEO_EXTENSIONS = listOf(".mp4", ".m4v", ".webm", ".gif", ".avi", ".mov", ".mkv")
         private const val PERIODIC_REFRESH_INTERVAL_MS = 5 * 60 * 1000L // 5 minutes
 
         /** Prompt id prefix for files found in the output folder but not in the history */
