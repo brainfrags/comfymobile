@@ -1075,6 +1075,18 @@ class ImageToImageViewModel : BaseGenerationViewModel<ImageToImageUiState, Image
         }
     }
 
+    /** Use an existing picture (e.g. from the media viewer) as the source image */
+    fun onSourceBitmapChange(context: Context, bitmap: Bitmap) {
+        _uiState.value = _uiState.value.copy(
+            sourceImage = bitmap,
+            maskPaths = emptyList(),
+            viewMode = ImageToImageViewMode.SOURCE
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            MediaStateHolder.putBitmap(MediaStateHolder.MediaKey.ItiSource, bitmap, context.applicationContext)
+        }
+    }
+
     // Source image
     fun onSourceImageChange(context: Context, uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {

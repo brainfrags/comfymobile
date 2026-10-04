@@ -1,5 +1,9 @@
 package sh.hnet.comfychair.ui.components.generate
 
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.filled.PhotoAlbum
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import android.graphics.Bitmap
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -37,6 +41,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -191,7 +196,128 @@ fun StatusDot(connected: Boolean, modifier: Modifier = Modifier) {
     )
 }
 
-/** Workflow selector chip ("WORKFLOW / name ▼"). */
+private val PillStart = RoundedCornerShape(topStartPercent = 50, bottomStartPercent = 50)
+private val PillEnd = RoundedCornerShape(topEndPercent = 50, bottomEndPercent = 50)
+private val PillHeight = 40.dp
+
+/**
+ * Two-part outlined pill (like the resolution toggle): the workflow name with a chevron opens
+ * the workflow list; the icon part on the right opens the workflow settings.
+ */
+@Composable
+fun WorkflowSplitDropdown(
+    workflows: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    onSettings: () -> Unit,
+    settingsDescription: String,
+    modifier: Modifier = Modifier
+) {
+    var open by remember { mutableStateOf(false) }
+    val outline = MaterialTheme.colorScheme.outline
+    Row(modifier.height(PillHeight), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(PillHeight)
+                    .clip(PillStart)
+                    .border(1.dp, outline, PillStart)
+                    .clickable(enabled = workflows.isNotEmpty()) { open = true }
+                    .padding(start = 14.dp, end = 8.dp)
+            ) {
+                Text(
+                    selected.ifEmpty { "—" },
+                    fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                // Chevron at the right edge of the name part
+                Spacer(Modifier.width(4.dp))
+                Icon(Icons.Default.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                workflows.forEach { name ->
+                    DropdownMenuItem(
+                        text = { Text(name) },
+                        trailingIcon = { if (name == selected) Icon(Icons.Default.Check, null) },
+                        onClick = { open = false; onSelect(name) }
+                    )
+                }
+            }
+        }
+        // Overlap the borders by 1dp so the divider line is single width
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .offset(x = (-1).dp)
+                .height(PillHeight)
+                .width(48.dp)
+                .clip(PillEnd)
+                .border(1.dp, outline, PillEnd)
+                .clickable(onClick = onSettings)
+        ) {
+            Icon(Icons.Default.Tune, contentDescription = settingsDescription, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+/** Outlined pill to pick the album new images go into (null = none). */
+@Composable
+fun AlbumDropdown(
+    albums: List<sh.hnet.comfychair.storage.GalleryAlbum>,
+    selectedId: String?,
+    onSelect: (String?) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var open by remember { mutableStateOf(false) }
+    val selected = albums.firstOrNull { it.id == selectedId }
+    val shape = RoundedCornerShape(50)
+    Box(modifier) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .height(PillHeight)
+                .clip(shape)
+                .background(if (selected != null) Brand.BlueSoft else Color.Transparent)
+                .border(1.dp, if (selected != null) Brand.Blue.copy(alpha = .5f) else MaterialTheme.colorScheme.outline, shape)
+                .clickable { open = true }
+                .padding(start = 12.dp, end = 8.dp)
+        ) {
+            Icon(
+                Icons.Default.PhotoAlbum, null, modifier = Modifier.size(18.dp),
+                tint = if (selected != null) Brand.BlueText else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                selected?.name ?: stringResource(R.string.label_no_album),
+                fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = if (selected != null) Brand.BlueText else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.widthIn(max = 110.dp)
+            )
+            Spacer(Modifier.width(2.dp))
+            Icon(Icons.Default.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.label_no_album)) },
+                trailingIcon = { if (selected == null) Icon(Icons.Default.Check, null) },
+                onClick = { open = false; onSelect(null) }
+            )
+            albums.forEach { album ->
+                DropdownMenuItem(
+                    text = { Text(album.name) },
+                    trailingIcon = { if (album.id == selected?.id) Icon(Icons.Default.Check, null) },
+                    onClick = { open = false; onSelect(album.id) }
+                )
+            }
+        }
+    }
+}
+
+/** Compact workflow selector chip ("name ▼"). */
 @Composable
 fun WorkflowChip(
     workflows: List<String>,
@@ -208,20 +334,15 @@ fun WorkflowChip(
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
                 .clickable(enabled = workflows.isNotEmpty()) { open = true }
-                .padding(start = 10.dp, end = 4.dp, top = 5.dp, bottom = 5.dp)
+                .height(32.dp)
+                .padding(start = 10.dp, end = 2.dp)
         ) {
-            Column(Modifier.widthIn(max = 180.dp)) {
-                Text(
-                    stringResource(R.string.label_workflow).uppercase(),
-                    fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    selected.ifEmpty { "—" },
-                    fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-            }
+            Text(
+                selected.ifEmpty { "—" },
+                fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 200.dp)
+            )
             Icon(Icons.Default.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
@@ -233,6 +354,19 @@ fun WorkflowChip(
                 )
             }
         }
+    }
+}
+
+/** Small icon button (32dp) for compact action rows; dimmed when disabled. */
+@Composable
+fun SmallActionIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(32.dp)) {
+        Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -253,7 +387,15 @@ fun OverlayChip(text: String, enabled: Boolean = true, onClick: () -> Unit) {
 
 /** "12/20" progress pill with a ring. */
 @Composable
-fun ProgressPill(progress: Int, max: Int, modifier: Modifier = Modifier, translucent: Boolean = true, active: Boolean = true) {
+fun ProgressPill(
+    progress: Int,
+    max: Int,
+    modifier: Modifier = Modifier,
+    translucent: Boolean = true,
+    active: Boolean = true,
+    /** Text next to the ring instead of "progress/max" (the ring still shows progress/max) */
+    label: String? = null
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
@@ -270,8 +412,8 @@ fun ProgressPill(progress: Int, max: Int, modifier: Modifier = Modifier, translu
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            if (active) "$progress/$max" else "–/–",
-            color = Color.White.copy(alpha = if (active) 1f else .35f), fontFamily = FontFamily.Monospace,
+            label ?: if (active) "$progress/$max" else "–/–",
+            color = Color.White.copy(alpha = if (active || label != null) 1f else .35f), fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.SemiBold, fontSize = 12.sp
         )
     }
@@ -290,7 +432,7 @@ fun MetaLine(text: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * Recent results (newest first, from the gallery) with a gallery button at the end.
+ * Recent results (newest first, from the gallery), optionally with a gallery button at the end.
  * Cells are square and share the row width equally.
  */
 @Composable
@@ -298,12 +440,16 @@ fun RecentResultsStrip(
     selectedKey: String?,
     onSelect: (GalleryItem) -> Unit,
     modifier: Modifier = Modifier,
-    count: Int = 6
+    count: Int = 6,
+    showGalleryButton: Boolean = true,
+    /** Only show this album's items (null = all) */
+    album: sh.hnet.comfychair.storage.GalleryAlbum? = null
 ) {
     val context = LocalContext.current
     val nav = LocalMainNav.current
     val items by GalleryRepository.getInstance().galleryItems.collectAsState()
-    val recent = items.take(count)
+    val recent = (if (album == null) items else items.filter { album.contains(it.promptId, it.toCacheKey().keyString) })
+        .take(count)
     Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         for (i in 0 until count) {
             val item = recent.getOrNull(i)
@@ -337,7 +483,7 @@ fun RecentResultsStrip(
             }
         }
         // Gallery button
-        Column(
+        if (showGalleryButton) Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
             modifier = Modifier

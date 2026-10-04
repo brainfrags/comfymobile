@@ -45,7 +45,9 @@ data class QueueState(
     /** Total number of jobs in the server queue (all clients) */
     val totalQueueSize: Int = 0,
     /** Our tracked jobs by promptId */
-    val ownJobs: Map<String, TrackedJob> = emptyMap()
+    val ownJobs: Map<String, TrackedJob> = emptyMap(),
+    /** Our jobs finished since the queue last ran empty (resets when a new batch starts) */
+    val completedInBatch: Int = 0
 ) {
     /** Whether any job is currently executing */
     val isExecuting: Boolean get() = executingPromptId != null
@@ -54,6 +56,9 @@ data class QueueState(
     val ownActiveJobCount: Int get() = ownJobs.values.count {
         it.status == JobStatus.PENDING || it.status == JobStatus.EXECUTING
     }
+
+    /** Jobs in the current batch: finished + still queued or running */
+    val batchTotal: Int get() = completedInBatch + ownActiveJobCount
 }
 
 /**
@@ -104,6 +109,8 @@ object JobRegistry {
         )
 
         val newJobs = currentState.ownJobs + (promptId to job)
+        // A job submitted while nothing of ours is pending starts a new batch
+        val completed = if (currentState.ownActiveJobCount == 0) 0 else currentState.completedInBatch
 
         // If this job is already executing (execution_start came before registration),
         // update the executing owner info now that we know it
@@ -112,10 +119,11 @@ object JobRegistry {
             _queueState.value = currentState.copy(
                 ownJobs = newJobs,
                 executingOwnerId = ownerId,
-                executingContentType = contentType
+                executingContentType = contentType,
+                completedInBatch = completed
             )
         } else {
-            _queueState.value = currentState.copy(ownJobs = newJobs)
+            _queueState.value = currentState.copy(ownJobs = newJobs, completedInBatch = completed)
         }
     }
 
@@ -199,7 +207,8 @@ object JobRegistry {
             executingPromptId = if (isCurrentlyExecuting) null else currentState.executingPromptId,
             executingOwnerId = if (isCurrentlyExecuting) null else currentState.executingOwnerId,
             executingContentType = if (isCurrentlyExecuting) null else currentState.executingContentType,
-            ownJobs = newJobs
+            ownJobs = newJobs,
+            completedInBatch = currentState.completedInBatch + (if (job != null) 1 else 0)
         )
 
         // Trigger gallery refresh - single source of truth for completion-triggered refreshes

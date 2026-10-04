@@ -138,6 +138,8 @@ sealed class MediaViewerEvent {
     data class ShowToast(val messageResId: Int) : MediaViewerEvent()
     data object ItemDeleted : MediaViewerEvent()
     data object Close : MediaViewerEvent()
+    /** A request was posted to ViewerHandoff: go back to the generation screens */
+    data object OpenGeneration : MediaViewerEvent()
 }
 
 /**
@@ -214,6 +216,42 @@ class MediaViewerViewModel : ViewModel() {
             return
         }
         _uiState.value = state.copy(isUiVisible = !state.isUiVisible)
+    }
+
+    /** Send the current picture's prompt to Text to Image. */
+    fun reusePrompt() {
+        val item = _uiState.value.currentItem ?: return
+        viewModelScope.launch {
+            val metadata = cachedMetadata[item.metadataKey()]?.metadata
+                ?: fetchMetadataForItem(item).also { cachedMetadata[item.metadataKey()] = MetadataHolder(it) }
+            val positive = metadata?.positivePrompt
+            if (positive.isNullOrBlank()) {
+                _events.emit(MediaViewerEvent.ShowToast(R.string.msg_no_generation_info))
+                return@launch
+            }
+            ViewerHandoff.post(ViewerHandoff.Request.ReusePrompt(positive, metadata?.negativePrompt))
+            _events.emit(MediaViewerEvent.OpenGeneration)
+        }
+    }
+
+    /** Send the current picture to Image to Image as the source. */
+    fun editImage() {
+        val state = _uiState.value
+        val bitmap = state.currentBitmap
+        viewModelScope.launch {
+            if (state.currentItem?.isVideo == true || bitmap == null) {
+                _events.emit(MediaViewerEvent.ShowToast(R.string.error_image_not_ready))
+                return@launch
+            }
+            ViewerHandoff.post(ViewerHandoff.Request.EditImage(bitmap))
+            _events.emit(MediaViewerEvent.OpenGeneration)
+        }
+    }
+
+    /** Stop the slideshow and continue viewing the item it was showing. */
+    fun stopSlideshow(atIndex: Int) {
+        if (atIndex != _uiState.value.currentIndex) setCurrentIndex(atIndex)
+        _uiState.value = _uiState.value.copy(isSlideshowPlaying = false, isUiVisible = true)
     }
 
     /** Start (hides the controls) or stop the slideshow. */

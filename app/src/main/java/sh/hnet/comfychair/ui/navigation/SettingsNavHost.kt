@@ -1,5 +1,6 @@
 package sh.hnet.comfychair.ui.navigation
 
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -137,7 +138,8 @@ fun SettingsNavHost(
                     Column(Modifier.fillMaxSize()) {
                         Row(
                             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             sectionTitles.forEach { (key, title) ->
                                 PillChip(title, onClick = { jumpTo(key) })

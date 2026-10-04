@@ -708,4 +708,20 @@
     <string name="msg_some_items_failed_to_move">Some files could not be moved</string>
     <string name="msg_album_renamed">Album renamed</string>
     <string name="msg_album_deleted">Album deleted</string>
+    <string name="gallery_sort">Sort</string>
+    <string name="gallery_sort_newest">Newest first</string>
+    <string name="gallery_sort_oldest">Oldest first</string>
+    <string name="gallery_sort_name">Name</string>
+    <string name="gallery_sort_type">Images first</string>
+    <string name="gallery_date_today">Today</string>
+    <string name="gallery_date_yesterday">Yesterday</string>
+    <string name="gallery_date_unknown">Unknown date</string>
+    <string name="media_viewer_reuse_prompt">Reuse prompt</string>
+    <string name="media_viewer_edit_image">Edit image (img2img)</string>
+    <string name="label_slideshow_seconds">Slideshow: %1$d s per picture</string>
+    <string name="error_image_not_ready">The picture is still loading</string>
+    <string name="gallery_view_mode">View</string>
+    <string name="gallery_album_item_count">%1$d items</string>
+    <string name="label_no_album">No album</string>
+    <string name="gallery_sort_custom">Custom (hold and drag)</string>
 </resources>

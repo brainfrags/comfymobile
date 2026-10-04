@@ -242,4 +242,55 @@ object AppSettings {
             .putString(KEY_GALLERY_VIEW_MODE, mode)
             .apply()
     }
+
+    private const val KEY_GALLERY_SORT_ORDER = "gallery_sort_order"
+    private const val KEY_SLIDESHOW_SECONDS = "slideshow_seconds"
+    private const val KEY_CURRENT_ALBUM_PREFIX = "current_album_"
+
+    /** Album selected for generation/gallery on a server, or null for none. */
+    fun getCurrentAlbumId(context: Context, serverId: String): String? {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_CURRENT_ALBUM_PREFIX + serverId, null)
+    }
+
+    fun setCurrentAlbumId(context: Context, serverId: String, albumId: String?) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .apply {
+                if (albumId == null) remove(KEY_CURRENT_ALBUM_PREFIX + serverId)
+                else putString(KEY_CURRENT_ALBUM_PREFIX + serverId, albumId)
+            }
+            .apply()
+    }
+
+    const val SLIDESHOW_SECONDS_DEFAULT = 4
+    const val SLIDESHOW_SECONDS_MIN = 2
+    const val SLIDESHOW_SECONDS_MAX = 20
+
+    /** Seconds each picture stays on screen in the slideshow. */
+    fun getSlideshowSeconds(context: Context): Int {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getInt(KEY_SLIDESHOW_SECONDS, SLIDESHOW_SECONDS_DEFAULT)
+            .coerceIn(SLIDESHOW_SECONDS_MIN, SLIDESHOW_SECONDS_MAX)
+    }
+
+    fun setSlideshowSeconds(context: Context, seconds: Int) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_SLIDESHOW_SECONDS, seconds.coerceIn(SLIDESHOW_SECONDS_MIN, SLIDESHOW_SECONDS_MAX))
+            .apply()
+    }
+
+    /** Gallery sort order name (see GallerySortOrder). */
+    fun getGallerySortOrder(context: Context): String? {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_GALLERY_SORT_ORDER, null)
+    }
+
+    fun setGallerySortOrder(context: Context, order: String) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_GALLERY_SORT_ORDER, order)
+            .apply()
+    }
 }

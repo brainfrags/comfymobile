@@ -153,7 +153,7 @@ fun ServerSettingsScreen(
 
             // GPU / RAM meters side by side
             if (stats != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     stats.gpus.forEachIndexed { i, gpu ->
                         if (gpu.vramTotalGB > 0) {
                             UsageMeter(
@@ -181,7 +181,7 @@ fun ServerSettingsScreen(
             }
 
             // Actions
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(onClick = onLogout, contentPadding = PaddingValues(horizontal = 10.dp)) {
                     Text(stringResource(R.string.button_change_server), fontSize = 12.sp)
                 }
@@ -214,7 +214,7 @@ fun ServerSettingsScreen(
 private fun UsageMeter(label: String, used: Double, total: Double, modifier: Modifier = Modifier) {
     val ratio = (used / total).toFloat().coerceIn(0f, 1f)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Row(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(label, fontSize = 11.5.sp, fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
             Text("%.1f / %.0f GB".format(used, total), fontSize = 11.5.sp, fontFamily = FontFamily.Monospace)

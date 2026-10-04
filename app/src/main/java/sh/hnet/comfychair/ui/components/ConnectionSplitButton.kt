@@ -1,5 +1,6 @@
 package sh.hnet.comfychair.ui.components
 
+import androidx.compose.ui.Alignment
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -101,7 +102,7 @@ fun ConnectionSplitButton(
     val trailingEnabled = connectionState != ConnectionState.CONNECTED &&
                           connectionState != ConnectionState.FAILED
 
-    Row(modifier = modifier) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
         // Leading button - connection action
         SplitButtonDefaults.ElevatedLeadingButton(
             onClick = { if (isConnecting) onCancel() else onConnect() },

@@ -28,7 +28,14 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalView
-import kotlinx.coroutines.delay
+import sh.hnet.comfychair.ui.components.SlideshowPlayer
+import sh.hnet.comfychair.storage.AppSettings
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.Info
@@ -75,14 +82,12 @@ import sh.hnet.comfychair.viewmodel.MediaViewerEvent
 import sh.hnet.comfychair.viewmodel.MediaViewerViewModel
 import sh.hnet.comfychair.viewmodel.ViewerMode
 
-/** Time each item stays on screen during a slideshow */
-private const val SLIDESHOW_INTERVAL_MS = 3000L
-
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun MediaViewerScreen(
     viewModel: MediaViewerViewModel,
     onClose: () -> Unit,
+    onOpenGeneration: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -131,6 +136,9 @@ fun MediaViewerScreen(
                 is MediaViewerEvent.Close -> {
                     onClose()
                 }
+                is MediaViewerEvent.OpenGeneration -> {
+                    onOpenGeneration()
+                }
             }
         }
     }
@@ -143,7 +151,9 @@ fun MediaViewerScreen(
         // Media content
         when (uiState.mode) {
             ViewerMode.GALLERY -> {
-                if (uiState.items.isNotEmpty()) {
+                // The pager is left out during a slideshow (no video playing underneath) and is
+                // recreated afterwards at the item the slideshow stopped on
+                if (uiState.items.isNotEmpty() && !uiState.isSlideshowPlaying) {
                     // Key the pager by items list identity to force recreation on deletion
                     val itemsKey = uiState.items.map { "${it.promptId}_${it.filename}" }.joinToString(",")
 
@@ -173,17 +183,6 @@ fun MediaViewerScreen(
                                 }
                         }
 
-                        // Slideshow: advance every few seconds, wrapping around at the end
-                        LaunchedEffect(uiState.isSlideshowPlaying, pagerState.currentPage) {
-                            if (!uiState.isSlideshowPlaying) return@LaunchedEffect
-                            delay(SLIDESHOW_INTERVAL_MS)
-                            val next = pagerState.currentPage + 1
-                            if (next < uiState.items.size) {
-                                pagerState.animateScrollToPage(next)
-                            } else {
-                                pagerState.scrollToPage(0)
-                            }
-                        }
 
                         HorizontalPager(
                             state = pagerState,
@@ -296,6 +295,17 @@ fun MediaViewerScreen(
             }
         }
 
+        // Slideshow (drawn over the pager; tap or back stops it on the current item)
+        if (uiState.isSlideshowPlaying) {
+            SlideshowPlayer(
+                items = uiState.items,
+                startIndex = uiState.currentIndex,
+                slideDurationMs = remember { AppSettings.getSlideshowSeconds(context) * 1000 },
+                onStop = { index -> viewModel.stopSlideshow(index) }
+            )
+            BackHandler { viewModel.stopSlideshow(uiState.currentIndex) }
+        }
+
         // Counter chip (gallery mode only, when multiple items)
         if (uiState.mode == ViewerMode.GALLERY && uiState.totalCount > 1) {
             AnimatedVisibility(
@@ -341,6 +351,32 @@ fun MediaViewerScreen(
                 onShare = { viewModel.shareCurrentItem() },
                 onInfo = { showMetadataSheet = true }
             )
+        }
+
+        // Reuse prompt / edit image (above the toolbar)
+        AnimatedVisibility(
+            visible = uiState.isUiVisible && !uiState.isSlideshowPlaying,
+            enter = fadeIn(animationSpec = tween(250)),
+            exit = fadeOut(animationSpec = tween(250)),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = toolbarBottomPadding + 76.dp)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilledTonalButton(onClick = { viewModel.reusePrompt() }) {
+                    Icon(Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.media_viewer_reuse_prompt))
+                }
+                if (uiState.currentItem?.isVideo != true) {
+                    FilledTonalButton(onClick = { viewModel.editImage() }) {
+                        Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.media_viewer_edit_image))
+                    }
+                }
+            }
         }
 
         // Back FAB

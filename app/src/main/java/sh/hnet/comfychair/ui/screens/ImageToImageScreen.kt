@@ -1,5 +1,15 @@
 package sh.hnet.comfychair.ui.screens
 
+import androidx.compose.material.icons.filled.LayersClear
+import sh.hnet.comfychair.ui.components.generate.WorkflowSplitDropdown
+import sh.hnet.comfychair.ui.components.generate.SourceResultToggle
+import sh.hnet.comfychair.ui.components.generate.PreviewPlaceholder
+import sh.hnet.comfychair.ui.components.generate.PromptCardContent
+import sh.hnet.comfychair.ui.components.generate.ProgressPill
+import sh.hnet.comfychair.ui.components.generate.GenerationScreenLayout
+import sh.hnet.comfychair.ui.components.generate.GenerateWithGalleryRow
+import sh.hnet.comfychair.ui.components.generate.AlbumDropdown
+import sh.hnet.comfychair.repository.AlbumRepository
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
@@ -260,198 +270,180 @@ fun ImageToImageScreen(
         }
     }
 
-    // UI composition
-    Column(modifier = Modifier.fillMaxSize()) {
-        // Top App Bar with image options
-        TopAppBar(
-            title = {
-                WorkflowChip(
-                    workflows = if (uiState.mode == ImageToImageMode.EDITING) uiState.editingWorkflows.map { it.name } else uiState.availableWorkflows.map { it.name },
-                    selected = if (uiState.mode == ImageToImageMode.EDITING) uiState.selectedEditingWorkflow else uiState.selectedWorkflow,
-                    onSelect = { if (uiState.mode == ImageToImageMode.EDITING) imageToImageViewModel.onEditingWorkflowChange(it) else imageToImageViewModel.onWorkflowChange(it) }
-                )
+    // ---------- Pieces ----------
+
+    // Album new images go into (shared with Text to Image and the gallery)
+    LaunchedEffect(Unit) { AlbumRepository.ensureLoaded(context) }
+    val albums by AlbumRepository.albums.collectAsState()
+    val currentAlbumId by AlbumRepository.currentAlbumId.collectAsState()
+    val currentAlbum = albums.firstOrNull { it.id == currentAlbumId }
+
+    val isEditing = uiState.mode == ImageToImageMode.EDITING
+    val showingSource = uiState.viewMode == ImageToImageViewMode.SOURCE
+    val progressVisible = isThisScreenExecuting && generationState.maxProgress > 0 && generationState.progress > 0
+    val batchLabel = if (queueState.batchTotal > 0) "${queueState.completedInBatch}/${queueState.batchTotal}" else null
+
+    fun generate(front: Boolean) {
+        scope.launch {
+            // In inpainting mode, require mask
+            if (uiState.mode == ImageToImageMode.INPAINTING && !imageToImageViewModel.hasMask()) {
+                Toast.makeText(context, context.getString(R.string.hint_paint_mask), Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val workflowJson = imageToImageViewModel.prepareWorkflow()
+            if (workflowJson == null) {
+                Toast.makeText(context, context.getString(R.string.error_generation_failed), Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            generationViewModel.startGeneration(
+                workflowJson,
+                ImageToImageViewModel.OWNER_ID,
+                front = front
+            ) { success, promptId, errorMessage ->
+                if (success && promptId != null) AlbumRepository.addPromptToCurrent(promptId)
+                if (!success) {
+                    Toast.makeText(
+                        context,
+                        errorMessage ?: context.getString(R.string.error_generation_failed),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    fun openMaskEditor() {
+        val source = uiState.sourceImage ?: return
+        MaskEditorStateHolder.initialize(
+            sourceImage = source,
+            maskPaths = uiState.maskPaths,
+            brushSize = uiState.brushSize,
+            isEraserMode = uiState.isEraserMode,
+            onPathAdded = { path, isEraser, brushSize ->
+                imageToImageViewModel.addMaskPath(path, isEraser, brushSize)
+                MaskEditorStateHolder.updateMaskPaths(imageToImageViewModel.uiState.value.maskPaths)
             },
-            windowInsets = WindowInsets(0, 0, 0, 0),
-            actions = {
-                // Upload image button
-                IconButton(onClick = { imagePickerLauncher.launch("image/*") }) {
-                    Icon(Icons.Default.AddPhotoAlternate, contentDescription = stringResource(R.string.button_upload_source_image))
-                }
-                // Edit mask button (only in inpainting mode when source image exists)
-                if (uiState.sourceImage != null && uiState.mode == ImageToImageMode.INPAINTING) {
-                    IconButton(onClick = {
-                        // Initialize state holder and launch mask editor activity
-                        MaskEditorStateHolder.initialize(
-                            sourceImage = uiState.sourceImage!!,
-                            maskPaths = uiState.maskPaths,
-                            brushSize = uiState.brushSize,
-                            isEraserMode = uiState.isEraserMode,
-                            onPathAdded = { path, isEraser, brushSize ->
-                                imageToImageViewModel.addMaskPath(path, isEraser, brushSize)
-                                // Update state holder with new paths
-                                MaskEditorStateHolder.updateMaskPaths(imageToImageViewModel.uiState.value.maskPaths)
-                            },
-                            onClearMask = {
-                                imageToImageViewModel.clearMask()
-                                MaskEditorStateHolder.updateMaskPaths(emptyList())
-                            },
-                            onInvertMask = {
-                                imageToImageViewModel.invertMask()
-                                MaskEditorStateHolder.updateMaskPaths(imageToImageViewModel.uiState.value.maskPaths)
-                            },
-                            onBrushSizeChange = { imageToImageViewModel.onBrushSizeChange(it) },
-                            onEraserModeChange = { imageToImageViewModel.onEraserModeChange(it) }
-                        )
-                        context.startActivity(MaskEditorActivity.createIntent(context))
-                    }) {
-                        Icon(Icons.Default.Brush, contentDescription = stringResource(R.string.button_edit_mask))
-                    }
-                    // Clear mask button
-                    IconButton(onClick = { imageToImageViewModel.clearMask() }) {
-                        Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.button_clear_mask))
-                    }
-                }
-                // Menu button
-                ModeMenuButton()
-                AppMenuDropdown(
-                    onSettings = onNavigateToSettings,
-                    onLogout = onLogout
-                )
-            }
+            onClearMask = {
+                imageToImageViewModel.clearMask()
+                MaskEditorStateHolder.updateMaskPaths(emptyList())
+            },
+            onInvertMask = {
+                imageToImageViewModel.invertMask()
+                MaskEditorStateHolder.updateMaskPaths(imageToImageViewModel.uiState.value.maskPaths)
+            },
+            onBrushSizeChange = { imageToImageViewModel.onBrushSizeChange(it) },
+            onEraserModeChange = { imageToImageViewModel.onEraserModeChange(it) }
         )
+        context.startActivity(MaskEditorActivity.createIntent(context))
+    }
 
-        // Progress indicator - below app bar, only show if THIS screen's job is executing
-        if (isThisScreenExecuting) {
-            GenerationProgressBar(
-                progress = generationState.progress,
-                maxProgress = generationState.maxProgress,
-                modifier = Modifier.fillMaxWidth()
+    val shownImage = if (showingSource) uiState.sourceImage else uiState.previewImage
+    val previewRatio = shownImage?.let { it.width.toFloat() / it.height } ?: 1f
+
+    // ---------- Layout ----------
+
+    GenerationScreenLayout(
+        expandPrompt = expandPrompt,
+        previewRatio = previewRatio,
+        onPreviewClick = when {
+            showingSource && uiState.sourceImage != null -> {
+                // Source image (without mask)
+                { context.startActivity(MediaViewerActivity.createSingleImageIntent(context, uiState.sourceImage!!)) }
+            }
+            !showingSource && uiState.previewImage != null -> {
+                {
+                    // Generated image, swipe through the gallery. While generating, the preview
+                    // is a live image, not a gallery item.
+                    context.startActivity(
+                        MediaViewerActivity.createPreviewIntent(
+                            context = context,
+                            hostname = generationViewModel.getHostname(),
+                            port = generationViewModel.getPort(),
+                            bitmap = uiState.previewImage,
+                            filename = if (isThisScreenExecuting) null else uiState.previewImageFilename,
+                            subfolder = if (isThisScreenExecuting) null else uiState.previewImageSubfolder,
+                            type = uiState.previewImageType
+                        )
+                    )
+                }
+            }
+            else -> null
+        },
+        progress = { m, translucent ->
+            ProgressPill(
+                generationState.progress, generationState.maxProgress, m,
+                translucent = translucent, active = progressVisible, label = batchLabel
             )
-        }
-
-        // Wide screens (tablet / unfolded): preview on the left, controls on the right
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth().weight(1f)) {
-        val isWide = maxWidth >= 600.dp
-
-        val previewContent: @Composable (Modifier) -> Unit = { boxModifier ->
-            Box(modifier = boxModifier) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .heightIn(min = 150.dp)
-                        .background(MaterialTheme.colorScheme.background)
-                        .clickable(
-                            enabled = (uiState.viewMode == ImageToImageViewMode.PREVIEW && uiState.previewImage != null) ||
-                                      (uiState.viewMode == ImageToImageViewMode.SOURCE && uiState.sourceImage != null),
-                            onClick = {
-                                when (uiState.viewMode) {
-                                    ImageToImageViewMode.PREVIEW -> {
-                                        // Launch MediaViewer for generated image (swipe through the gallery).
-                                        // While generating, the preview is a live image, not a gallery item.
-                                        uiState.previewImage?.let { bitmap ->
-                                            val intent = MediaViewerActivity.createPreviewIntent(
-                                                context = context,
-                                                hostname = generationViewModel.getHostname(),
-                                                port = generationViewModel.getPort(),
-                                                bitmap = bitmap,
-                                                filename = if (isThisScreenExecuting) null else uiState.previewImageFilename,
-                                                subfolder = if (isThisScreenExecuting) null else uiState.previewImageSubfolder,
-                                                type = uiState.previewImageType
-                                            )
-                                            context.startActivity(intent)
-                                        }
-                                    }
-                                    ImageToImageViewMode.SOURCE -> {
-                                        // Launch MediaViewer for source image (without mask)
-                                        uiState.sourceImage?.let { bitmap ->
-                                            val intent = MediaViewerActivity.createSingleImageIntent(context, bitmap)
-                                            context.startActivity(intent)
-                                        }
-                                    }
-                                }
-                            }
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    when (uiState.viewMode) {
-                        ImageToImageViewMode.SOURCE -> {
-                            if (uiState.sourceImage != null) {
-                                if (uiState.mode == ImageToImageMode.INPAINTING) {
-                                    // Read-only preview of source image with mask overlay
-                                    MaskPreview(
-                                        sourceImage = uiState.sourceImage,
-                                        maskPaths = uiState.maskPaths,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                } else {
-                                    // Editing mode: show plain source image without mask
-                                    Image(
-                                        bitmap = uiState.sourceImage!!.asImageBitmap(),
-                                        contentDescription = stringResource(R.string.content_description_source_image),
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                }
-                            } else {
-                                // Placeholder - app logo
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.clickable { imagePickerLauncher.launch("image/*") }
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.msg_no_source_image),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                        ImageToImageViewMode.PREVIEW -> {
-                            if (uiState.previewImage != null) {
-                                Image(
-                                    bitmap = uiState.previewImage!!.asImageBitmap(),
-                                    contentDescription = stringResource(R.string.content_description_preview),
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                            } else {
-                        // Placeholder - app logo
-                            }
-                        }
-                    }
+        },
+        workflowDropdown = { m ->
+            WorkflowSplitDropdown(
+                workflows = if (isEditing) uiState.editingWorkflows.map { it.name } else uiState.availableWorkflows.map { it.name },
+                selected = if (isEditing) uiState.selectedEditingWorkflow else uiState.selectedWorkflow,
+                onSelect = {
+                    if (isEditing) imageToImageViewModel.onEditingWorkflowChange(it) else imageToImageViewModel.onWorkflowChange(it)
+                },
+                onSettings = { showOptionsSheet = true },
+                settingsDescription = stringResource(R.string.button_options),
+                modifier = m
+            )
+        },
+        albumDropdown = {
+            AlbumDropdown(albums = albums, selectedId = currentAlbumId, onSelect = { AlbumRepository.select(it) })
+        },
+        serverMenu = {
+            AppMenuDropdown(onSettings = onNavigateToSettings, onLogout = onLogout)
+        },
+        headerActions = {
+            // Pick source image
+            IconButton(onClick = { imagePickerLauncher.launch("image/*") }) {
+                Icon(Icons.Default.AddPhotoAlternate, contentDescription = stringResource(R.string.button_upload_source_image))
+            }
+            // Mask (inpainting with a source image)
+            if (uiState.sourceImage != null && uiState.mode == ImageToImageMode.INPAINTING) {
+                IconButton(onClick = { openMaskEditor() }) {
+                    Icon(Icons.Default.Brush, contentDescription = stringResource(R.string.button_edit_mask))
                 }
-
-                // View mode toggle
-                SingleChoiceSegmentedButtonRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(bottom = 16.dp)
-                ) {
-                    SegmentedButton(
-                        selected = uiState.viewMode == ImageToImageViewMode.SOURCE,
-                        onClick = { imageToImageViewModel.onViewModeChange(ImageToImageViewMode.SOURCE) },
-                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
-                    ) {
-                        Text(stringResource(R.string.tab_source_image))
-                    }
-                    SegmentedButton(
-                        selected = uiState.viewMode == ImageToImageViewMode.PREVIEW,
-                        onClick = { imageToImageViewModel.onViewModeChange(ImageToImageViewMode.PREVIEW) },
-                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
-                    ) {
-                        Text(stringResource(R.string.tab_preview))
-                    }
+                IconButton(onClick = { imageToImageViewModel.clearMask() }) {
+                    Icon(Icons.Default.LayersClear, contentDescription = stringResource(R.string.button_clear_mask))
                 }
             }
+        },
+        previewContent = {
+            if (showingSource) {
+                val source = uiState.sourceImage
+                when {
+                    source != null && uiState.mode == ImageToImageMode.INPAINTING -> MaskPreview(
+                        sourceImage = source,
+                        maskPaths = uiState.maskPaths,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    source != null -> Image(
+                        bitmap = source.asImageBitmap(),
+                        contentDescription = stringResource(R.string.content_description_source_image),
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit
+                    )
+                    else -> PreviewPlaceholder(stringResource(R.string.msg_no_source_image)) {
+                        imagePickerLauncher.launch("image/*")
+                    }
+                }
+            } else {
+                uiState.previewImage?.let { bmp ->
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = stringResource(R.string.content_description_preview),
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit
+                    )
+                }
             }
-        }
-
-        val controlsContent: @Composable ColumnScope.() -> Unit = {
-        // Recent results + gallery button (replaces the old bottom bar)
-        if (!expandPrompt) {
+        },
+        belowPreview = {
+            SourceResultToggle(
+                showingSource = showingSource,
+                onShowSource = { imageToImageViewModel.onViewModeChange(ImageToImageViewMode.SOURCE) },
+                onShowResult = { imageToImageViewModel.onViewModeChange(ImageToImageViewMode.PREVIEW) }
+            )
             RecentResultsStrip(
                 selectedKey = null,
                 onSelect = { item ->
@@ -467,192 +459,81 @@ fun ImageToImageScreen(
                         )
                     )
                 },
-                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp)
+                showGalleryButton = false,
+                album = currentAlbum
             )
-        }
-        // Prompt Input — expands to fill screen above keyboard when focused
-        OutlinedTextField(
-            value = uiState.positivePrompt,
-            onValueChange = {
-                imageToImageViewModel.onPositivePromptChange(it)
-                presetViewModel.clearActivePreset()
-            },
-            label = { Text(stringResource(R.string.hint_prompt)) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (expandPrompt || isWide) Modifier.weight(1f) else Modifier)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .onFocusChanged { promptFocused = it.isFocused },
-            minLines = 3,
-            maxLines = if (expandPrompt || isWide) Int.MAX_VALUE else 4,
-            keyboardOptions = KeyboardOptions(autoCorrectEnabled = spellCheckEnabled),
-            visualTransformation = positivePromptTransformation,
-            leadingIcon = {
-                PromptPresetDropdown(
-                    favorites = presetUiState.favorites,
-                    activePresetId = presetUiState.activePresetId,
-                    currentPromptIsEmpty = uiState.positivePrompt.isEmpty(),
-                    onPresetSelected = { presetViewModel.onPresetSelected(it) },
-                    onOpenLibrary = { presetViewModel.showLibrary() },
-                    onSaveCurrentPrompt = { presetViewModel.showSaveDialog(uiState.positivePrompt) },
-                    onResetPrompt = { presetViewModel.resetPrompt() }
-                )
-            },
-            trailingIcon = {
-                if (uiState.positivePrompt.isNotEmpty()) {
-                    IconButton(onClick = { imageToImageViewModel.onPositivePromptChange("") }) {
-                        Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.content_description_clear))
-                    }
+        },
+        prompt = { fill ->
+            PromptCardContent(
+                value = uiState.positivePrompt,
+                onValueChange = {
+                    imageToImageViewModel.onPositivePromptChange(it)
+                    presetViewModel.clearActivePreset()
+                },
+                fill = fill,
+                onFocusChanged = { promptFocused = it },
+                autoCorrect = spellCheckEnabled,
+                visualTransformation = positivePromptTransformation,
+                presetButton = {
+                    PromptPresetDropdown(
+                        favorites = presetUiState.favorites,
+                        activePresetId = presetUiState.activePresetId,
+                        currentPromptIsEmpty = uiState.positivePrompt.isEmpty(),
+                        onPresetSelected = { presetViewModel.onPresetSelected(it) },
+                        onOpenLibrary = { presetViewModel.showLibrary() },
+                        onSaveCurrentPrompt = { presetViewModel.showSaveDialog(uiState.positivePrompt) },
+                        onResetPrompt = { presetViewModel.resetPrompt() }
+                    )
                 }
-            }
-        )
-
-        // Generate and Options buttons
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 16.dp)
-        ) {
-            GenerationButton(
-                queueSize = queueState.totalQueueSize,
-                isExecuting = queueState.isExecuting,
-                isEnabled = imageToImageViewModel.hasValidConfiguration() &&
-                    uiState.positivePrompt.isNotBlank() &&
-                    uiState.sourceImage != null,
-                isOfflineMode = isOfflineMode,
-                isUploading = uiState.isUploading,
-                isFetching = uiState.isFetching,
-                isConnecting = isConnecting,
-                onGenerate = {
-                    scope.launch {
-                        // In inpainting mode, require mask
-                        if (uiState.mode == ImageToImageMode.INPAINTING && !imageToImageViewModel.hasMask()) {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.hint_paint_mask),
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            return@launch
-                        }
-                        val workflowJson = imageToImageViewModel.prepareWorkflow()
-                        if (workflowJson != null) {
-                            generationViewModel.startGeneration(
-                                workflowJson,
-                                ImageToImageViewModel.OWNER_ID
-                            ) { success, _, errorMessage ->
-                                if (!success) {
-                                    Toast.makeText(
-                                        context,
-                                        errorMessage ?: context.getString(R.string.error_generation_failed),
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                }
-                            }
-                        } else {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.error_generation_failed),
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
-                },
-                onCancelCurrent = { generationViewModel.cancelGeneration { } },
-                onAddToFrontOfQueue = {
-                    scope.launch {
-                        // In inpainting mode, require mask
-                        if (uiState.mode == ImageToImageMode.INPAINTING && !imageToImageViewModel.hasMask()) {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.hint_paint_mask),
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            return@launch
-                        }
-                        val workflowJson = imageToImageViewModel.prepareWorkflow()
-                        if (workflowJson != null) {
-                            generationViewModel.startGeneration(
-                                workflowJson,
-                                ImageToImageViewModel.OWNER_ID,
-                                front = true
-                            ) { success, _, errorMessage ->
-                                if (!success) {
-                                    Toast.makeText(
-                                        context,
-                                        errorMessage ?: context.getString(R.string.error_generation_failed),
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                }
-                            }
-                        } else {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.error_generation_failed),
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
-                },
-                onClearQueue = {
-                    generationViewModel.getClient()?.clearQueue { success ->
-                        val messageRes = if (success) R.string.msg_queue_cleared_success
-                                       else R.string.error_queue_clear
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                },
-                modifier = Modifier.weight(1f)
             )
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Animate gear icon rotation when options sheet is shown
-            val optionsIconRotation by animateFloatAsState(
-                targetValue = if (showOptionsSheet) 90f else 0f,
-                label = "options icon rotation"
-            )
-
-            OutlinedIconButton(
-                onClick = { showOptionsSheet = true },
-                modifier = Modifier.size(56.dp)
-            ) {
-                Icon(
-                    Icons.Default.Settings,
-                    contentDescription = stringResource(R.string.button_options),
-                    modifier = Modifier.rotate(optionsIconRotation)
-                )
-            }
-        }
-        }
-
-        if (isWide) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                previewContent(Modifier.weight(1f).fillMaxHeight())
-                Column(
-                    modifier = Modifier.weight(1f).fillMaxHeight().padding(top = 8.dp),
-                    verticalArrangement = Arrangement.Bottom
+        },
+        settingsRow = {
+            // Editing (whole image) / Inpainting (masked area)
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = uiState.mode == ImageToImageMode.EDITING,
+                    onClick = { imageToImageViewModel.onModeChange(ImageToImageMode.EDITING) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
                 ) {
-                    controlsContent()
+                    Text(stringResource(R.string.option_mode_editing))
+                }
+                SegmentedButton(
+                    selected = uiState.mode == ImageToImageMode.INPAINTING,
+                    onClick = { imageToImageViewModel.onModeChange(ImageToImageMode.INPAINTING) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                ) {
+                    Text(stringResource(R.string.option_mode_inpainting))
                 }
             }
-        } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-        // Image Preview Area + view mode toggle — collapse when typing in the prompt field
-        AnimatedVisibility(
-            visible = !expandPrompt,
-            modifier = Modifier.weight(1f),
-            enter = fadeIn(tween(150)),
-            exit = ExitTransition.None
-        ) {
-            previewContent(Modifier.fillMaxSize())
-        }
-                controlsContent()
+        },
+        generateRow = {
+            GenerateWithGalleryRow {
+                GenerationButton(
+                    queueSize = queueState.totalQueueSize,
+                    isExecuting = queueState.isExecuting,
+                    isEnabled = imageToImageViewModel.hasValidConfiguration() &&
+                        uiState.positivePrompt.isNotBlank() &&
+                        uiState.sourceImage != null,
+                    isOfflineMode = isOfflineMode,
+                    isUploading = uiState.isUploading,
+                    isFetching = uiState.isFetching,
+                    isConnecting = isConnecting,
+                    onGenerate = { generate(front = false) },
+                    onCancelCurrent = { generationViewModel.cancelGeneration { } },
+                    onAddToFrontOfQueue = { generate(front = true) },
+                    onClearQueue = {
+                        generationViewModel.getClient()?.clearQueue { success ->
+                            val messageRes = if (success) R.string.msg_queue_cleared_success else R.string.error_queue_clear
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
-        } // End of BoxWithConstraints
-    } // End of outer Column
+    )
 
     // Options bottom sheet
     if (showOptionsSheet) {

@@ -9,12 +9,17 @@ import java.io.File
 /**
  * A user-made album grouping gallery items.
  * [members] holds item keys ("${promptId}_${filename}").
+ * [prompts] holds prompt IDs whose outputs all belong to the album (used for images
+ * generated while the album was selected: their filenames are unknown at submit time).
  */
 data class GalleryAlbum(
     val id: String,
     val name: String,
-    val members: Set<String> = emptySet()
-)
+    val members: Set<String> = emptySet(),
+    val prompts: Set<String> = emptySet()
+) {
+    fun contains(promptId: String, key: String): Boolean = key in members || promptId in prompts
+}
 
 /**
  * Persists gallery albums per server: filesDir/local_gallery/{serverId}/albums.json
@@ -33,10 +38,12 @@ object GalleryAlbumStore {
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
                 val m = o.optJSONArray("members") ?: JSONArray()
+                val p = o.optJSONArray("prompts") ?: JSONArray()
                 GalleryAlbum(
                     id = o.getString("id"),
                     name = o.getString("name"),
-                    members = (0 until m.length()).map { m.getString(it) }.toSet()
+                    members = (0 until m.length()).map { m.getString(it) }.toSet(),
+                    prompts = (0 until p.length()).map { p.getString(it) }.toSet()
                 )
             }
         } catch (e: Exception) {
@@ -53,6 +60,7 @@ object GalleryAlbumStore {
                     put("id", a.id)
                     put("name", a.name)
                     put("members", JSONArray(a.members.toList()))
+                    put("prompts", JSONArray(a.prompts.toList()))
                 })
             }
             val f = file(context, serverId)

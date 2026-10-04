@@ -1,21 +1,6 @@
 package sh.hnet.comfychair.ui.screens
 
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.DeleteForever
-import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.RestoreFromTrash
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.boundsInParent
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.zIndex
-import sh.hnet.comfychair.viewmodel.GalleryTab
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -57,7 +42,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
@@ -130,7 +114,32 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import sh.hnet.comfychair.ui.components.DragSelectState
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Deselect
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.ui.text.style.TextOverflow
+import sh.hnet.comfychair.viewmodel.GallerySection
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import sh.hnet.comfychair.viewmodel.GallerySortOrder
+import androidx.compose.material.icons.filled.CreateNewFolder
 import sh.hnet.comfychair.ui.components.gallerySelectGestures
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.RestoreFromTrash
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.zIndex
+import sh.hnet.comfychair.repository.AlbumRepository
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -185,17 +194,6 @@ fun GalleryScreen(
         }
     }
 
-    val tab = uiState.tab
-    val selectedAlbum = uiState.selectedAlbum
-    val isTrash = tab == GalleryTab.TRASH
-    val showAlbumList = tab == GalleryTab.ALBUMS && selectedAlbum == null
-
-    // Back: leave selection mode, then close the open album
-    BackHandler(enabled = uiState.isSelectionMode || selectedAlbum != null) {
-        if (uiState.isSelectionMode) galleryViewModel.clearSelection()
-        else galleryViewModel.selectAlbum(null)
-    }
-
     // Helper function to convert GalleryItems to MediaViewerItems
     fun galleryItemsToViewerItems(items: List<GalleryItem>): List<MediaViewerItem> {
         return items.map { item ->
@@ -211,11 +209,13 @@ fun GalleryScreen(
     }
 
     // Function to launch media viewer
-    // [clickedKey] = item to open (null = first item). The item is looked up by key in the
-    // latest list, so a refresh between the tap and here can't open a different image.
+    // [clickedKey] = item to open (null = last item, where the slideshow starts). The item is
+    // looked up by key in the latest list, so a refresh between the tap and here can't open a
+    // different image.
     fun launchMediaViewer(clickedKey: String?, startSlideshow: Boolean = false) {
-        val items = galleryViewModel.uiState.value.items
-        val clickedIndex = if (clickedKey == null) 0
+        val state = galleryViewModel.uiState.value
+        val items = state.items
+        val clickedIndex = if (clickedKey == null) items.lastIndex
         else items.indexOfFirst { "${it.promptId}_${it.filename}" == clickedKey }
         if (clickedIndex !in items.indices) return
 
@@ -226,14 +226,15 @@ fun GalleryScreen(
         val allKeys = items.map { it.toCacheKey() }
         MediaCache.updateNavigationPriorities(clickedIndex, allKeys)
 
+        val viewerItems = galleryItemsToViewerItems(items)
         val intent = MediaViewerActivity.createGalleryIntent(
             context = context,
             hostname = ConnectionManager.hostname,
             port = ConnectionManager.port,
-            items = galleryItemsToViewerItems(items),
+            items = viewerItems,
             initialIndex = clickedIndex,
             startSlideshow = startSlideshow,
-            isTrash = galleryViewModel.uiState.value.tab == GalleryTab.TRASH
+            isTrash = state.section == GallerySection.TRASH
         )
         mediaViewerLauncher.launch(intent)
     }
@@ -249,7 +250,8 @@ fun GalleryScreen(
     val columns = viewMode.columns
     val spacing = if (columns >= 3) 4.dp else 8.dp
 
-    // Where each visible cell is drawn, in grid coordinates (used to find the item under a finger)
+    // Where each visible cell is drawn, in grid coordinates (used to find the item under a finger).
+    // Measured from the cells themselves, so content padding and headers can't shift the hit test.
     val itemBounds = remember { HashMap<String, Rect>() }
     fun visibleKeys(): List<Any> = if (isMasonry) {
         staggeredState.layoutInfo.visibleItemsInfo.map { it.key }
@@ -296,6 +298,8 @@ fun GalleryScreen(
         },
         onSelectionChange = { galleryViewModel.setSelection(it) },
         onReorderStart = { key, pos ->
+            // Dragging switches to the custom order (day headers go away)
+            galleryViewModel.beginReorder()
             draggingKey = key
             dragPosition = pos
             grabOffset = pos - (itemBounds[key]?.topLeft ?: pos)
@@ -321,6 +325,11 @@ fun GalleryScreen(
         onReorderEnd = { draggingKey = null }
     ) }
 
+    // Items split into days (one group without a header when sorted by name/type)
+    val dateGroups = remember(uiState.items, uiState.sortOrder) {
+        groupByDay(uiState.items, byDate = uiState.sortOrder == GallerySortOrder.NEWEST || uiState.sortOrder == GallerySortOrder.OLDEST)
+    }
+
     // Auto-scroll while drag-selecting or moving an item near the top/bottom edge
     LaunchedEffect(dragSelectState.autoScrollSpeed) {
         val speed = dragSelectState.autoScrollSpeed
@@ -333,12 +342,14 @@ fun GalleryScreen(
         }
     }
 
-    // Dialogs
+    // Album dialogs
     var showNewAlbumDialog by remember { mutableStateOf(false) }
     var showAddToAlbumDialog by remember { mutableStateOf(false) }
     var editingAlbum by remember { mutableStateOf<GalleryAlbum?>(null) }
     var showEmptyTrashDialog by remember { mutableStateOf(false) }
     var showDeleteForeverDialog by remember { mutableStateOf(false) }
+    val selectedAlbum = uiState.selectedAlbum
+    val isTrash = uiState.section == GallerySection.TRASH
 
     // Create prefetch items list from gallery items
     val prefetchItems = remember(uiState.items) {
@@ -367,8 +378,8 @@ fun GalleryScreen(
         }
     }
 
-    // Start at the top when switching tab, album or view mode
-    LaunchedEffect(tab, uiState.selectedAlbumId, viewMode) {
+    // Start at the top when switching album, view mode or sort order
+    LaunchedEffect(uiState.section, uiState.selectedAlbumId, viewMode, uiState.sortOrder) {
         if (isMasonry) staggeredState.scrollToItem(0) else gridState.scrollToItem(0)
     }
 
@@ -395,17 +406,15 @@ fun GalleryScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
+        val inAlbum = uiState.section == GallerySection.ALBUMS && selectedAlbum != null
+        val showAlbumList = uiState.section == GallerySection.ALBUMS && selectedAlbum == null
         TopAppBar(
             title = {
                 when {
-                    uiState.isSelectionMode ->
-                        Text(stringResource(R.string.gallery_selected_count, uiState.selectedItems.size))
-                    selectedAlbum != null ->
-                        Text(selectedAlbum.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    else -> GalleryTabs(
-                        selected = tab,
-                        onSelect = { galleryViewModel.selectTab(it) }
-                    )
+                    uiState.isSelectionMode -> Text(stringResource(R.string.gallery_selected_count, uiState.selectedItems.size))
+                    inAlbum -> Text(selectedAlbum!!.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    // Photos / Albums / Trash tabs at the start of the app bar
+                    else -> GalleryTabs(selected = uiState.section, onSelect = { galleryViewModel.setSection(it) })
                 }
             },
             windowInsets = WindowInsets(0, 0, 0, 0),
@@ -414,30 +423,40 @@ fun GalleryScreen(
                     IconButton(onClick = { galleryViewModel.clearSelection() }) {
                         Icon(Icons.Default.Close, contentDescription = stringResource(R.string.button_cancel_selection))
                     }
-                } else if (selectedAlbum != null) {
+                } else if (inAlbum) {
                     IconButton(onClick = { galleryViewModel.selectAlbum(null) }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.content_description_back))
                     }
                 }
             },
             actions = {
-                if (uiState.isSelectionMode && isTrash) {
-                    // Trash selection: restore or delete for good
-                    IconButton(onClick = { galleryViewModel.restoreSelected() }) {
-                        Icon(Icons.Default.RestoreFromTrash, contentDescription = stringResource(R.string.gallery_restore))
-                    }
-                    IconButton(
-                        onClick = { showDeleteForeverDialog = true },
-                        enabled = uiState.selectedItems.isNotEmpty()
-                    ) {
+                if (uiState.isSelectionMode) {
+                    // Select all / deselect all (the shown items)
+                    val allSelected = uiState.items.isNotEmpty() && uiState.items.all { itemKey(it) in uiState.selectedItems }
+                    IconButton(onClick = {
+                        if (allSelected) galleryViewModel.setSelection(emptySet()) else galleryViewModel.selectAll()
+                    }) {
                         Icon(
-                            Icons.Default.DeleteForever,
-                            contentDescription = stringResource(R.string.gallery_delete_forever),
-                            tint = MaterialTheme.colorScheme.error
+                            if (allSelected) Icons.Default.Deselect else Icons.Default.SelectAll,
+                            contentDescription = stringResource(if (allSelected) R.string.gallery_deselect_all else R.string.gallery_select_all)
                         )
                     }
-                } else if (uiState.isSelectionMode) {
-                    // Selection mode actions: Trash, albums, Save and Share
+                    if (isTrash) {
+                        // Trash: restore or delete for good
+                        IconButton(onClick = { galleryViewModel.restoreSelected() }) {
+                            Icon(Icons.Default.RestoreFromTrash, contentDescription = stringResource(R.string.gallery_restore))
+                        }
+                        IconButton(
+                            onClick = { showDeleteForeverDialog = true },
+                            enabled = uiState.selectedItems.isNotEmpty()
+                        ) {
+                            Icon(
+                                Icons.Default.DeleteForever,
+                                contentDescription = stringResource(R.string.gallery_delete_forever),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    } else {
                     IconButton(onClick = { galleryViewModel.deleteSelected() }) {
                         Icon(
                             Icons.Default.Delete,
@@ -448,8 +467,8 @@ fun GalleryScreen(
                     IconButton(onClick = { showAddToAlbumDialog = true }) {
                         Icon(Icons.Default.LibraryAdd, contentDescription = stringResource(R.string.gallery_add_to_album))
                     }
-                    if (selectedAlbum != null) {
-                        IconButton(onClick = { galleryViewModel.removeSelectedFromAlbum(selectedAlbum.id) }) {
+                    if (inAlbum) {
+                        IconButton(onClick = { galleryViewModel.removeSelectedFromAlbum(selectedAlbum!!.id) }) {
                             Icon(Icons.Default.RemoveCircleOutline, contentDescription = stringResource(R.string.gallery_remove_from_album))
                         }
                     }
@@ -459,42 +478,91 @@ fun GalleryScreen(
                     IconButton(onClick = { galleryViewModel.shareSelected(context) }) {
                         Icon(Icons.Default.Share, contentDescription = stringResource(R.string.button_share))
                     }
+                    }
+                } else if (isTrash) {
+                    IconButton(
+                        onClick = { showEmptyTrashDialog = true },
+                        enabled = uiState.items.isNotEmpty()
+                    ) {
+                        Icon(Icons.Default.DeleteSweep, contentDescription = stringResource(R.string.gallery_empty_trash))
+                    }
+                    IconButton(
+                        onClick = { galleryViewModel.enterSelectionMode() },
+                        enabled = uiState.items.isNotEmpty()
+                    ) {
+                        Icon(Icons.Default.Checklist, contentDescription = stringResource(R.string.button_gallery_select))
+                    }
+                    AppMenuDropdown(
+                        onSettings = onNavigateToSettings,
+                        onLogout = onLogout
+                    )
                 } else {
-                    when {
-                        showAlbumList -> {
-                            IconButton(onClick = { showNewAlbumDialog = true }) {
-                                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.gallery_new_album))
+                    if (!showAlbumList) {
+                        // View mode menu (2/3/4 columns, original ratio, single column)
+                        Box {
+                            var showViewMenu by remember { mutableStateOf(false) }
+                            IconButton(onClick = { showViewMenu = true }) {
+                                Icon(viewModeIcon(viewMode), contentDescription = stringResource(R.string.gallery_view_mode))
                             }
-                        }
-                        isTrash -> {
-                            IconButton(
-                                onClick = { showEmptyTrashDialog = true },
-                                enabled = uiState.items.isNotEmpty()
-                            ) {
-                                Icon(Icons.Default.DeleteSweep, contentDescription = stringResource(R.string.gallery_empty_trash))
-                            }
-                            IconButton(
-                                onClick = { galleryViewModel.enterSelectionMode() },
-                                enabled = uiState.items.isNotEmpty()
-                            ) {
-                                Icon(Icons.Default.Checklist, contentDescription = stringResource(R.string.button_gallery_select))
-                            }
-                        }
-                        else -> {
-                            if (selectedAlbum != null) {
-                                IconButton(onClick = { editingAlbum = selectedAlbum }) {
-                                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.gallery_edit_album))
+                            DropdownMenu(expanded = showViewMenu, onDismissRequest = { showViewMenu = false }) {
+                                GalleryViewMode.entries.forEach { mode ->
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(viewModeLabel(mode))) },
+                                        onClick = {
+                                            galleryViewModel.setViewMode(mode)
+                                            showViewMenu = false
+                                        },
+                                        leadingIcon = { Icon(viewModeIcon(mode), contentDescription = null) },
+                                        trailingIcon = { if (mode == viewMode) Icon(Icons.Default.Check, contentDescription = null) }
+                                    )
                                 }
                             }
-                            IconButton(
-                                onClick = { launchMediaViewer(null, startSlideshow = true) },
-                                enabled = uiState.items.isNotEmpty()
-                            ) {
-                                Icon(Icons.Default.Slideshow, contentDescription = stringResource(R.string.gallery_slideshow))
+                        }
+                        // Sort order menu
+                        Box {
+                            var showSortMenu by remember { mutableStateOf(false) }
+                            IconButton(onClick = { showSortMenu = true }) {
+                                Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = stringResource(R.string.gallery_sort))
                             }
-                            IconButton(onClick = { galleryViewModel.enterSelectionMode() }) {
-                                Icon(Icons.Default.Checklist, contentDescription = stringResource(R.string.button_gallery_select))
+                            DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
+                                listOf(
+                                    GallerySortOrder.NEWEST to R.string.gallery_sort_newest,
+                                    GallerySortOrder.OLDEST to R.string.gallery_sort_oldest,
+                                    GallerySortOrder.NAME to R.string.gallery_sort_name,
+                                    GallerySortOrder.TYPE to R.string.gallery_sort_type,
+                                    GallerySortOrder.CUSTOM to R.string.gallery_sort_custom
+                                ).forEach { (order, labelRes) ->
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(labelRes)) },
+                                        onClick = {
+                                            galleryViewModel.setSortOrder(order)
+                                            showSortMenu = false
+                                        },
+                                        trailingIcon = { if (uiState.sortOrder == order) Icon(Icons.Default.Check, contentDescription = null) }
+                                    )
+                                }
                             }
+                        }
+                    }
+                    if (inAlbum) {
+                        IconButton(onClick = { editingAlbum = selectedAlbum }) {
+                            Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.gallery_edit_album))
+                        }
+                    } else {
+                        IconButton(onClick = { showNewAlbumDialog = true }) {
+                            Icon(Icons.Default.CreateNewFolder, contentDescription = stringResource(R.string.gallery_new_album))
+                        }
+                    }
+                    if (!showAlbumList) {
+                        IconButton(
+                            // Slideshow plays towards the top of the list, so start from the last item
+                            onClick = { launchMediaViewer(null, startSlideshow = true) },
+                            enabled = uiState.items.isNotEmpty()
+                        ) {
+                            Icon(Icons.Default.Slideshow, contentDescription = stringResource(R.string.gallery_slideshow))
+                        }
+                        IconButton(onClick = { galleryViewModel.enterSelectionMode() }) {
+                            Icon(Icons.Default.Checklist, contentDescription = stringResource(R.string.button_gallery_select))
                         }
                     }
                     AppMenuDropdown(
@@ -508,70 +576,31 @@ fun GalleryScreen(
         // Files are being moved between album folders
         if (uiState.isMoving) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        }
-
-        // View mode switcher (not for the album list)
-        if (!showAlbumList) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val modes = listOf(
-                    Triple(GalleryViewMode.GRID_2, Icons.Default.GridView, R.string.gallery_view_grid_2),
-                    Triple(GalleryViewMode.GRID_3, Icons.Default.Apps, R.string.gallery_view_grid_3),
-                    Triple(GalleryViewMode.GRID_4, Icons.Default.ViewComfy, R.string.gallery_view_grid_4),
-                    Triple(GalleryViewMode.MASONRY, Icons.Default.Dashboard, R.string.gallery_view_masonry),
-                    Triple(GalleryViewMode.SINGLE, Icons.Default.ViewAgenda, R.string.gallery_view_single)
-                )
-                modes.forEach { (mode, icon, labelRes) ->
-                    ViewModeButton(
-                        icon = icon,
-                        label = stringResource(labelRes),
-                        selected = viewMode == mode,
-                        onClick = { galleryViewModel.setViewMode(mode) }
-                    )
-                }
-                if (uiState.isSelectionMode && uiState.items.isNotEmpty()) {
-                    Spacer(modifier = Modifier.weight(1f))
-                    val allSelected = uiState.items.all { itemKey(it) in uiState.selectedItems }
-                    TextButton(
-                        onClick = {
-                            if (allSelected) galleryViewModel.setSelection(emptySet())
-                            else galleryViewModel.selectAll()
-                        }
-                    ) {
-                        Text(stringResource(if (allSelected) R.string.gallery_deselect_all else R.string.gallery_select_all))
-                    }
-                }
-            }
+        } else {
             HorizontalDivider()
         }
 
+        // Back: leave selection mode, then the opened album
+        BackHandler(enabled = uiState.isSelectionMode || inAlbum) {
+            if (uiState.isSelectionMode) galleryViewModel.clearSelection() else galleryViewModel.selectAlbum(null)
+        }
+
+        if (showAlbumList) {
+            AlbumGrid(
+                albums = uiState.albums,
+                counts = uiState.albumCounts,
+                covers = uiState.albumCovers,
+                onOpen = { galleryViewModel.selectAlbum(it) },
+                onNewAlbum = { showNewAlbumDialog = true }
+            )
+        } else {
         PullToRefreshBox(
             isRefreshing = uiState.isRefreshing,
             onRefresh = { galleryViewModel.manualRefresh() },
             modifier = Modifier.fillMaxSize()
         ) {
+            // Always use LazyVerticalGrid for consistent nested scroll behavior with pull-to-refresh
             NoOverscrollContainer(modifier = Modifier.fillMaxSize()) {
-                if (showAlbumList) {
-                    AlbumList(
-                        albums = uiState.albums + uiState.folderAlbums,
-                        counts = uiState.albumCounts,
-                        covers = uiState.albumCovers,
-                        isOfflineMode = isOfflineMode,
-                        onOpen = { galleryViewModel.selectAlbum(it.id) },
-                        onNewAlbum = { showNewAlbumDialog = true }
-                    )
-                } else {
-
-                val emptyMessage = when {
-                    isTrash -> R.string.msg_trash_empty
-                    selectedAlbum != null -> R.string.msg_album_empty
-                    else -> R.string.msg_gallery_empty
-                }
-
                 // One grid cell; [placement] animates moves (not for the item being dragged)
                 @Composable
                 fun Cell(item: GalleryItem, placement: Modifier) {
@@ -610,16 +639,57 @@ fun GalleryScreen(
                     verticalItemSpacing = spacing,
                     modifier = Modifier.fillMaxSize().then(selectGestures)
                 ) {
-                if (uiState.isLoading && uiState.items.isEmpty() && !isTrash) {
+                if (uiState.isLoading && uiState.items.isEmpty()) {
                     // Loading state - show as full-span item
-                    item(span = StaggeredGridItemSpan.FullLine) { GridLoading() }
+                    item(span = StaggeredGridItemSpan.FullLine) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    }
                 } else if (uiState.items.isEmpty()) {
                     // Empty state - show as full-span item
-                    item(span = StaggeredGridItemSpan.FullLine) { GridEmpty(emptyMessage) }
+                    item(span = StaggeredGridItemSpan.FullLine) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.Image,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(64.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                                Text(
+                                    text = stringResource(
+                                        when {
+                                            isTrash -> R.string.msg_trash_empty
+                                            selectedAlbum != null -> R.string.msg_album_empty
+                                            else -> R.string.msg_gallery_empty
+                                        }
+                                    ),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
                 } else {
-                    // Gallery items
-                    itemsIndexed(uiState.items, key = { _, item -> itemKey(item) }) { _, item ->
+                    // Gallery items, grouped by day
+                    dateGroups.forEach { group ->
+                        item(key = "header_${group.day}", span = StaggeredGridItemSpan.FullLine) {
+                            DateGroupHeader(group, uiState.selectedItems, ::itemKey) { galleryViewModel.setSelection(it) }
+                        }
+                        itemsIndexed(group.items, key = { _, item -> "${item.promptId}_${item.filename}" }) { _, item ->
                         Cell(item, Modifier.animateItem())
+                    }
                     }
                 }
                 }
@@ -632,22 +702,63 @@ fun GalleryScreen(
                     verticalArrangement = Arrangement.spacedBy(spacing),
                     modifier = Modifier.fillMaxSize().then(selectGestures)
                 ) {
-                if (uiState.isLoading && uiState.items.isEmpty() && !isTrash) {
+                if (uiState.isLoading && uiState.items.isEmpty()) {
                     // Loading state - show as full-span item
-                    item(span = { GridItemSpan(maxLineSpan) }) { GridLoading() }
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    }
                 } else if (uiState.items.isEmpty()) {
                     // Empty state - show as full-span item
-                    item(span = { GridItemSpan(maxLineSpan) }) { GridEmpty(emptyMessage) }
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.Image,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(64.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                                Text(
+                                    text = stringResource(
+                                        when {
+                                            isTrash -> R.string.msg_trash_empty
+                                            selectedAlbum != null -> R.string.msg_album_empty
+                                            else -> R.string.msg_gallery_empty
+                                        }
+                                    ),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
                 } else {
-                    // Gallery items
-                    gridItemsIndexed(uiState.items, key = { _, item -> itemKey(item) }) { _, item ->
+                    // Gallery items, grouped by day
+                    dateGroups.forEach { group ->
+                        item(key = "header_${group.day}", span = { GridItemSpan(maxLineSpan) }) {
+                            DateGroupHeader(group, uiState.selectedItems, ::itemKey) { galleryViewModel.setSelection(it) }
+                        }
+                        gridItemsIndexed(group.items, key = { _, item -> "${item.promptId}_${item.filename}" }) { _, item ->
                         Cell(item, Modifier.animateItem())
+                    }
                     }
                 }
                 }
                 }
-                }
             }
+        }
         }
     }
 
@@ -683,7 +794,7 @@ fun GalleryScreen(
 
     if (showAddToAlbumDialog) {
         AddToAlbumDialog(
-            albums = (uiState.albums + uiState.folderAlbums).filter { it.id != uiState.selectedAlbumId },
+            albums = uiState.albums.filter { it.id != uiState.selectedAlbumId },
             albumCounts = uiState.albumCounts,
             onSelectAlbum = { albumId ->
                 galleryViewModel.addSelectedToAlbum(albumId)
@@ -727,13 +838,13 @@ fun GalleryScreen(
  */
 @Composable
 private fun GalleryTabs(
-    selected: GalleryTab,
-    onSelect: (GalleryTab) -> Unit
+    selected: GallerySection,
+    onSelect: (GallerySection) -> Unit
 ) {
     val tabs = listOf(
-        GalleryTab.PHOTOS to R.string.gallery_tab_photos,
-        GalleryTab.ALBUMS to R.string.gallery_tab_albums,
-        GalleryTab.TRASH to R.string.gallery_tab_trash
+        GallerySection.PHOTOS to R.string.gallery_tab_photos,
+        GallerySection.ALBUMS to R.string.gallery_tab_albums,
+        GallerySection.TRASH to R.string.gallery_tab_trash
     )
     Row(
         modifier = Modifier
@@ -761,134 +872,6 @@ private fun GalleryTabs(
 }
 
 @Composable
-private fun GridLoading() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1f),
-        contentAlignment = Alignment.Center
-    ) {
-        CircularProgressIndicator()
-    }
-}
-
-@Composable
-private fun GridEmpty(messageRes: Int) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1f),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = Icons.Default.Image,
-                contentDescription = null,
-                modifier = Modifier.size(64.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-            )
-            Text(
-                text = stringResource(messageRes),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-/**
- * Album list: user albums, then one album per output subfolder, then a "New album" tile.
- */
-@Composable
-private fun AlbumList(
-    albums: List<GalleryAlbum>,
-    counts: Map<String, Int>,
-    covers: Map<String, GalleryItem>,
-    isOfflineMode: Boolean,
-    onOpen: (GalleryAlbum) -> Unit,
-    onNewAlbum: () -> Unit
-) {
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        contentPadding = PaddingValues(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier.fillMaxSize()
-    ) {
-        gridItemsIndexed(albums, key = { _, album -> album.id }) { _, album ->
-            Column(
-                modifier = Modifier
-                    .clip(MaterialTheme.shapes.medium)
-                    .clickable { onOpen(album) }
-            ) {
-                val cover = covers[album.id]
-                if (cover != null) {
-                    GalleryItemCard(item = cover, isSelected = false, isOfflineMode = isOfflineMode, square = true)
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                            .clip(MaterialTheme.shapes.medium)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PhotoLibrary,
-                            contentDescription = null,
-                            modifier = Modifier.size(40.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
-                    }
-                }
-                Row(
-                    modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (GalleryViewModel.isFolderAlbum(album.id)) {
-                        Icon(
-                            imageVector = Icons.Default.Folder,
-                            contentDescription = stringResource(R.string.gallery_folder_album),
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                    }
-                    Text(
-                        text = album.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Text(
-                    text = (counts[album.id] ?: 0).toString(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 2.dp)
-                )
-            }
-        }
-        item(key = "new_album") {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .clip(MaterialTheme.shapes.medium)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.medium)
-                    .clickable { onNewAlbum() },
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(32.dp))
-                    Text(stringResource(R.string.gallery_new_album), style = MaterialTheme.typography.labelLarge)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun ConfirmDeleteDialog(
     title: String,
     message: String,
@@ -908,6 +891,202 @@ private fun ConfirmDeleteDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.button_cancel)) }
         }
     )
+}
+
+/** Items generated on the same day. [day] = epoch day, or null for no header. */
+private class DateGroup(val day: Long?, val items: List<GalleryItem>)
+
+/** Split [items] (already sorted) into runs of the same local day. */
+private fun groupByDay(items: List<GalleryItem>, byDate: Boolean): List<DateGroup> {
+    if (!byDate || items.isEmpty()) return listOf(DateGroup(null, items))
+    val zone = java.time.ZoneId.systemDefault()
+    val groups = mutableListOf<DateGroup>()
+    var currentDay: Long? = null
+    var current = mutableListOf<GalleryItem>()
+    for (item in items) {
+        val day = if (item.timestamp > 0) {
+            java.time.Instant.ofEpochMilli(item.timestamp).atZone(zone).toLocalDate().toEpochDay()
+        } else UNKNOWN_DAY
+        if (day != currentDay && current.isNotEmpty()) {
+            groups += DateGroup(currentDay, current)
+            current = mutableListOf()
+        }
+        currentDay = day
+        current += item
+    }
+    groups += DateGroup(currentDay, current)
+    return groups
+}
+
+private const val UNKNOWN_DAY = Long.MIN_VALUE
+
+/**
+ * Day header ("Today", "Yesterday", or the date) with a select-all / deselect button
+ * for that day's items. Nothing is shown for a group without a day.
+ */
+@Composable
+private fun DateGroupHeader(
+    group: DateGroup,
+    selected: Set<String>,
+    keyOf: (GalleryItem) -> String,
+    onSelectionChange: (Set<String>) -> Unit
+) {
+    val day = group.day ?: return
+    val label = when {
+        day == UNKNOWN_DAY -> stringResource(R.string.gallery_date_unknown)
+        else -> {
+            val date = java.time.LocalDate.ofEpochDay(day)
+            val today = java.time.LocalDate.now()
+            when (date) {
+                today -> stringResource(R.string.gallery_date_today)
+                today.minusDays(1) -> stringResource(R.string.gallery_date_yesterday)
+                else -> {
+                    val locale = java.util.Locale.getDefault()
+                    val skeleton = if (date.year == today.year) "MMMdEEE" else "yMMMdEEE"
+                    val pattern = android.text.format.DateFormat.getBestDateTimePattern(locale, skeleton)
+                    date.format(java.time.format.DateTimeFormatter.ofPattern(pattern, locale))
+                }
+            }
+        }
+    }
+    val keys = group.items.map(keyOf)
+    val allSelected = keys.isNotEmpty() && keys.all { it in selected }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp, top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.weight(1f)
+        )
+        TextButton(onClick = { onSelectionChange(if (allSelected) selected - keys.toSet() else selected + keys) }) {
+            Text(stringResource(if (allSelected) R.string.gallery_deselect_all else R.string.gallery_select_all))
+        }
+    }
+}
+
+private fun viewModeIcon(mode: GalleryViewMode): ImageVector = when (mode) {
+    GalleryViewMode.GRID_2 -> Icons.Default.GridView
+    GalleryViewMode.GRID_3 -> Icons.Default.Apps
+    GalleryViewMode.GRID_4 -> Icons.Default.ViewComfy
+    GalleryViewMode.MASONRY -> Icons.Default.Dashboard
+    GalleryViewMode.SINGLE -> Icons.Default.ViewAgenda
+}
+
+private fun viewModeLabel(mode: GalleryViewMode): Int = when (mode) {
+    GalleryViewMode.GRID_2 -> R.string.gallery_view_grid_2
+    GalleryViewMode.GRID_3 -> R.string.gallery_view_grid_3
+    GalleryViewMode.GRID_4 -> R.string.gallery_view_grid_4
+    GalleryViewMode.MASONRY -> R.string.gallery_view_masonry
+    GalleryViewMode.SINGLE -> R.string.gallery_view_single
+}
+
+/** Album list: cover, name and item count per album, plus a "new album" tile. */
+@Composable
+private fun AlbumGrid(
+    albums: List<GalleryAlbum>,
+    counts: Map<String, Int>,
+    covers: Map<String, GalleryItem>,
+    onOpen: (String) -> Unit,
+    onNewAlbum: () -> Unit
+) {
+    val context = LocalContext.current
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(150.dp),
+        contentPadding = PaddingValues(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        gridItemsIndexed(albums, key = { _, album -> album.id }) { _, album ->
+            Column(
+                modifier = Modifier
+                    .clip(MaterialTheme.shapes.medium)
+                    .clickable { onOpen(album.id) }
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(MaterialTheme.shapes.medium)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val cover = covers[album.id]
+                    if (cover != null) {
+                        val (bitmap, _) = rememberGalleryThumbnail(cover, context)
+                        bitmap?.let {
+                            Image(
+                                bitmap = it.asImageBitmap(),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    } else {
+                        Icon(
+                            Icons.Default.PhotoLibrary,
+                            contentDescription = null,
+                            modifier = Modifier.size(40.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (AlbumRepository.isFolder(album.id)) {
+                        Icon(
+                            Icons.Default.Folder,
+                            contentDescription = stringResource(R.string.gallery_folder_album),
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text(
+                        album.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    stringResource(R.string.gallery_album_item_count, counts[album.id] ?: 0),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 2.dp)
+                )
+            }
+        }
+        item(key = "new_album") {
+            Column(
+                modifier = Modifier
+                    .clip(MaterialTheme.shapes.medium)
+                    .clickable(onClick = onNewAlbum)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(MaterialTheme.shapes.medium)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.medium),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(40.dp))
+                }
+                Text(
+                    stringResource(R.string.gallery_new_album),
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(top = 6.dp, start = 2.dp)
+                )
+            }
+        }
+    }
 }
 
 @Composable

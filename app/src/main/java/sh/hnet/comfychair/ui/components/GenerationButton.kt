@@ -1,5 +1,6 @@
 package sh.hnet.comfychair.ui.components
 
+import androidx.compose.ui.Alignment
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -92,7 +93,7 @@ fun GenerationButton(
         else -> stringResource(R.string.button_generate)
     }
 
-    Row(modifier = modifier) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
         // Leading button - fills available width, always submits to queue
         // Disabled when offline mode is active or input is invalid
         SplitButtonDefaults.ElevatedLeadingButton(

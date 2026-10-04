@@ -677,4 +677,20 @@
     <string name="msg_some_items_failed_to_move">Einige Dateien konnten nicht verschoben werden</string>
     <string name="msg_album_renamed">Album umbenannt</string>
     <string name="msg_album_deleted">Album gelöscht</string>
+    <string name="gallery_sort">Sortieren</string>
+    <string name="gallery_sort_newest">Neueste zuerst</string>
+    <string name="gallery_sort_oldest">Älteste zuerst</string>
+    <string name="gallery_sort_name">Name</string>
+    <string name="gallery_sort_type">Bilder zuerst</string>
+    <string name="gallery_date_today">Heute</string>
+    <string name="gallery_date_yesterday">Gestern</string>
+    <string name="gallery_date_unknown">Unbekanntes Datum</string>
+    <string name="media_viewer_reuse_prompt">Prompt wiederverwenden</string>
+    <string name="media_viewer_edit_image">Bild bearbeiten (img2img)</string>
+    <string name="label_slideshow_seconds">Diashow: %1$d s pro Bild</string>
+    <string name="error_image_not_ready">Das Bild wird noch geladen</string>
+    <string name="gallery_view_mode">Ansicht</string>
+    <string name="gallery_album_item_count">%1$d Elemente</string>
+    <string name="label_no_album">Kein Album</string>
+    <string name="gallery_sort_custom">Benutzerdefiniert (halten und ziehen)</string>
 </resources>

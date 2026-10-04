@@ -15,6 +15,8 @@ import java.io.File
  * - moves: files the app moved into another output folder (original file id -> new path
  *   relative to the output folder), so history items still find their file
  * - folders: album folders created in the app (shown even while empty)
+ * - pendingMoves: prompts generated while a folder album was selected (prompt id -> folder);
+ *   their files are moved into the folder once they appear
  *
  * Items are identified by their file ([fileId]) rather than by prompt, so an image
  * keeps its state whether it comes from the history or straight from the output folder.
@@ -26,7 +28,8 @@ data class GalleryLibrary(
     val purged: Set<String> = emptySet(),
     val order: List<String> = emptyList(),
     val moves: Map<String, String> = emptyMap(),
-    val folders: Set<String> = emptySet()
+    val folders: Set<String> = emptySet(),
+    val pendingMoves: Map<String, String> = emptyMap()
 )
 
 object GalleryLibraryStore {
@@ -58,7 +61,9 @@ object GalleryLibraryStore {
             o.optJSONObject("moves")?.let { m -> m.keys().forEach { k -> moves[k] = m.optString(k) } }
             val folders = o.optJSONArray("folders")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() }
                 ?: emptySet()
-            GalleryLibrary(trash, purged, order, moves, folders)
+            val pendingMoves = mutableMapOf<String, String>()
+            o.optJSONObject("pendingMoves")?.let { m -> m.keys().forEach { k -> pendingMoves[k] = m.optString(k) } }
+            GalleryLibrary(trash, purged, order, moves, folders, pendingMoves)
         } catch (e: Exception) {
             DebugLogger.e(TAG, "Failed to load library: ${e.message}")
             GalleryLibrary()
@@ -73,6 +78,7 @@ object GalleryLibraryStore {
                 put("order", JSONArray(library.order))
                 put("moves", JSONObject().apply { library.moves.forEach { (k, v) -> put(k, v) } })
                 put("folders", JSONArray(library.folders.toList()))
+                put("pendingMoves", JSONObject().apply { library.pendingMoves.forEach { (k, v) -> put(k, v) } })
             }
             val f = file(context, serverId)
             val tmp = File(f.parentFile, "$FILE.tmp")

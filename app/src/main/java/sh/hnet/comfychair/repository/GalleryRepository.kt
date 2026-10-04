@@ -309,6 +309,7 @@ class GalleryRepository private constructor() {
                 }
                 startLocalSync(context, serverId, client)
             }
+            processPendingMoves()
 
             return true
         } catch (e: Exception) {
@@ -531,6 +532,26 @@ class GalleryRepository private constructor() {
         return toMove.size - newPaths.size
     }
 
+    /** Move what [promptId] generates into [folder] once it shows up in the gallery. */
+    fun queuePromptMove(promptId: String, folder: String) {
+        updateLibrary { lib -> lib.copy(pendingMoves = lib.pendingMoves + (promptId to folder)) }
+    }
+
+    private var pendingMovesJob: Job? = null
+
+    /** Move newly generated items into the album folder that was selected when they were queued. */
+    private fun processPendingMoves() {
+        val pending = _library.value.pendingMoves
+        if (pending.isEmpty() || pendingMovesJob?.isActive == true) return
+        val found = _galleryItems.value.filter { it.promptId in pending }
+        if (found.isEmpty()) return
+        pendingMovesJob = scope.launch {
+            found.groupBy { pending.getValue(it.promptId) }.forEach { (folder, items) -> moveToFolder(items, folder) }
+            val done = found.mapTo(HashSet()) { it.promptId }
+            updateLibrary { lib -> lib.copy(pendingMoves = lib.pendingMoves - done) }
+        }
+    }
+
     private fun pathOf(item: GalleryItem) =
         if (item.subfolder.isEmpty()) item.filename else "${item.subfolder}/${item.filename}"
 
@@ -608,6 +629,21 @@ class GalleryRepository private constructor() {
      * Parse history JSON to gallery items.
      * Does NOT fetch bitmaps - those are loaded lazily via MediaCache.
      */
+    /**
+     * When a prompt ran, from its status messages ("execution_start"/"execution_success"
+     * carry a "timestamp" in ms). Returns 0 if the server does not report it.
+     */
+    private fun historyTimestamp(promptHistory: JSONObject): Long {
+        val messages = promptHistory.optJSONObject("status")?.optJSONArray("messages") ?: return 0L
+        var result = 0L
+        for (i in 0 until messages.length()) {
+            val message = messages.optJSONArray(i) ?: continue
+            val ts = message.optJSONObject(1)?.optLong("timestamp", 0L) ?: 0L
+            if (ts > result) result = ts
+        }
+        return result
+    }
+
     private fun parseHistoryToGalleryItems(historyJson: JSONObject): List<GalleryItem> {
         val items = mutableListOf<GalleryItem>()
         var index = 0
@@ -617,6 +653,7 @@ class GalleryRepository private constructor() {
             val promptId = promptIds.next()
             val promptHistory = historyJson.optJSONObject(promptId) ?: continue
             val outputs = promptHistory.optJSONObject("outputs") ?: continue
+            val timestamp = historyTimestamp(promptHistory)
 
             val nodeIds = outputs.keys()
             while (nodeIds.hasNext()) {
@@ -642,7 +679,8 @@ class GalleryRepository private constructor() {
                             subfolder = subfolder,
                             type = type,
                             isVideo = true,
-                            index = index++
+                            index = index++,
+                            timestamp = timestamp
                         ))
                     }
                 }
@@ -666,7 +704,8 @@ class GalleryRepository private constructor() {
                                 subfolder = subfolder,
                                 type = type,
                                 isVideo = true,
-                                index = index++
+                                index = index++,
+                                timestamp = timestamp
                             ))
                             continue
                         }
@@ -680,7 +719,8 @@ class GalleryRepository private constructor() {
                             subfolder = subfolder,
                             type = type,
                             isVideo = false,
-                            index = index++
+                            index = index++,
+                            timestamp = timestamp
                         ))
                     }
                 }

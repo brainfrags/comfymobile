@@ -12,6 +12,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import sh.hnet.comfychair.ui.components.generate.LocalMainNav
 import sh.hnet.comfychair.ui.components.generate.MainNavActions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import sh.hnet.comfychair.viewmodel.ViewerHandoff
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -58,6 +61,23 @@ fun MainNavHost(
         },
         onOpenGallery = onNavigateToGallery
     )
+    // Requests from the media viewer: open the matching screen. Edit-image is applied here
+    // (activity-scoped ViewModel); reuse-prompt is applied by the Text to Image screen.
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        ViewerHandoff.pending.collect { request ->
+            when (request) {
+                is ViewerHandoff.Request.ReusePrompt -> navActions.onSelectMode(MainRoute.TextToImage)
+                is ViewerHandoff.Request.EditImage -> {
+                    imageToImageViewModel.onSourceBitmapChange(context, request.bitmap)
+                    ViewerHandoff.consume(request)
+                    navActions.onSelectMode(MainRoute.ImageToImage)
+                }
+                null -> Unit
+            }
+        }
+    }
+
     // No bottom bar: each screen shows a mode button and a gallery button itself
     CompositionLocalProvider(LocalMainNav provides navActions) {
     Scaffold(

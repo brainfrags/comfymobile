@@ -30,6 +30,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import sh.hnet.comfychair.ui.components.generate.SmallActionIcon
+import sh.hnet.comfychair.ui.components.generate.LocalMainNav
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.OutlinedIconButton
@@ -39,6 +44,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -58,6 +64,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -69,6 +76,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import sh.hnet.comfychair.MediaViewerActivity
+import sh.hnet.comfychair.ui.components.generate.AlbumDropdown
+import sh.hnet.comfychair.ui.components.generate.WorkflowSplitDropdown
+import sh.hnet.comfychair.repository.AlbumRepository
+import sh.hnet.comfychair.viewmodel.ViewerHandoff
 import sh.hnet.comfychair.R
 import sh.hnet.comfychair.ui.components.generate.ratioOf
 import sh.hnet.comfychair.ui.components.generate.FitAspectBox
@@ -324,6 +335,24 @@ fun TextToImageScreen(
     }
     val bottomSheetConfig = remember(uiState, callbacks) { uiState.toBottomSheetConfig(callbacks) }
 
+    // "Reuse prompt" from the media viewer
+    LaunchedEffect(Unit) {
+        ViewerHandoff.pending.collect { request ->
+            if (request is ViewerHandoff.Request.ReusePrompt) {
+                textToImageViewModel.onPositivePromptChange(request.positive)
+                request.negative?.let { textToImageViewModel.onNegativePromptChange(it) }
+                presetViewModel.clearActivePreset()
+                ViewerHandoff.consume(request)
+            }
+        }
+    }
+
+    // Album new images go into (shared with the gallery)
+    LaunchedEffect(Unit) { AlbumRepository.ensureLoaded(context) }
+    val albums by AlbumRepository.albums.collectAsState()
+    val currentAlbumId by AlbumRepository.currentAlbumId.collectAsState()
+    val currentAlbum = albums.firstOrNull { it.id == currentAlbumId }
+
     // Which recent result is shown in the preview (null = latest generation)
     var selectedRecent by remember { mutableStateOf<GalleryItem?>(null) }
 
@@ -340,7 +369,9 @@ fun TextToImageScreen(
             return
         }
         selectedRecent = null
-        generationViewModel.startGeneration(workflowJson, TextToImageViewModel.OWNER_ID, front = front) { success, _, errorMessage ->
+        generationViewModel.startGeneration(workflowJson, TextToImageViewModel.OWNER_ID, front = front) { success, promptId, errorMessage ->
+            // Images from this prompt go into the selected album
+            if (success && promptId != null) AlbumRepository.addPromptToCurrent(promptId)
             if (!success) {
                 Toast.makeText(context, errorMessage ?: context.getString(R.string.error_generation_failed), Toast.LENGTH_LONG).show()
             }
@@ -418,8 +449,11 @@ fun TextToImageScreen(
     }
 
     val caps = uiState.capabilities
+    val mainNav = LocalMainNav.current
     val connected = connectionStatus == ConnectionStatus.CONNECTED
     val progressVisible = isThisScreenExecuting && generationState.maxProgress > 0 && generationState.progress > 0
+
+    val metaInfo = metaText(uiState.previewBitmap, if (uiState.randomSeed) null else uiState.seed, uiState.selectedWorkflow.ifEmpty { null })
 
     // ---------- Pieces ----------
 
@@ -430,31 +464,72 @@ fun TextToImageScreen(
         }
     }
 
-    val workflowChip: @Composable (Modifier) -> Unit = { m ->
-        WorkflowChip(
+    // Workflow name + chevron, with the workflow settings button as the right part
+    val workflowDropdown: @Composable (Modifier) -> Unit = { m ->
+        WorkflowSplitDropdown(
             workflows = uiState.availableWorkflows.map { it.name },
             selected = uiState.selectedWorkflow,
             onSelect = textToImageViewModel::onWorkflowChange,
+            onSettings = { showOptionsBottomSheet = true },
+            settingsDescription = stringResource(R.string.button_options),
             modifier = m
         )
     }
 
-    // Always shown; greyed out until there is an image
+    val albumDropdown: @Composable () -> Unit = {
+        AlbumDropdown(
+            albums = albums,
+            selectedId = currentAlbumId,
+            onSelect = { AlbumRepository.select(it) }
+        )
+    }
+
+    // Loading UI: ring = steps of the running image; text = finished images / images in this batch
+    val batchLabel = if (queueState.batchTotal > 0) "${queueState.completedInBatch}/${queueState.batchTotal}" else null
+
+    // Save / share / copy settings as small icons; always shown, greyed out until there is an image
     val imageActions: @Composable () -> Unit = {
         val hasImage = uiState.previewBitmap != null
-        run {
-            OverlayChip(stringResource(R.string.button_save), enabled = hasImage) {
-                textToImageViewModel.saveToGallery { success ->
-                    val messageRes = if (success) R.string.msg_image_saved_to_gallery else R.string.error_save_image
-                    Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
-                }
+        SmallActionIcon(Icons.Default.Save, stringResource(R.string.button_save), hasImage) {
+            textToImageViewModel.saveToGallery { success ->
+                val messageRes = if (success) R.string.msg_image_saved_to_gallery else R.string.error_save_image
+                Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
             }
-            OverlayChip(stringResource(R.string.button_share), enabled = hasImage) {
-                textToImageViewModel.getShareIntent()?.let { intent ->
-                    context.startActivity(android.content.Intent.createChooser(intent, context.getString(R.string.share_image)))
-                }
+        }
+        SmallActionIcon(Icons.Default.Share, stringResource(R.string.button_share), hasImage) {
+            textToImageViewModel.getShareIntent()?.let { intent ->
+                context.startActivity(android.content.Intent.createChooser(intent, context.getString(R.string.share_image)))
             }
-            OverlayChip(stringResource(R.string.button_copy_settings), enabled = hasImage) { copySettings() }
+        }
+        SmallActionIcon(Icons.Default.ContentCopy, stringResource(R.string.button_copy_settings), hasImage) { copySettings() }
+    }
+
+    // Resolution / seed / workflow info on the left, image actions on the right
+    val metaRow: @Composable (Modifier) -> Unit = { m ->
+        Row(m.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (uiState.previewBitmap != null) metaInfo else "",
+                fontFamily = FontFamily.Monospace, fontSize = 11.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            imageActions()
+        }
+    }
+
+
+    // Portrait / Square / Landscape
+    val ratioRow: @Composable () -> Unit = {
+        if (caps.hasWidth && caps.hasHeight) {
+            ResolutionPresetRow(
+                width = uiState.width,
+                height = uiState.height,
+                onSelect = { w, h ->
+                    textToImageViewModel.onWidthChange(w.toString())
+                    textToImageViewModel.onHeightChange(h.toString())
+                }
+            )
         }
     }
 
@@ -484,109 +559,46 @@ fun TextToImageScreen(
                 textToImageViewModel.onPositivePromptChange(it)
                 presetViewModel.clearActivePreset()
             },
-            label = { Text(stringResource(R.string.hint_prompt)) },
+            // Placeholder instead of a floating label, and no outline: the card is the frame,
+            // so the text sits centered in it (the label's notch pushed it down before)
+            placeholder = { Text(stringResource(R.string.hint_prompt)) },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color.Transparent,
+                unfocusedBorderColor = Color.Transparent,
+                disabledBorderColor = Color.Transparent
+            ),
             modifier = m.onFocusChanged { promptFocused = it.isFocused },
             minLines = 3,
             maxLines = if (fill) Int.MAX_VALUE else 4,
             keyboardOptions = KeyboardOptions(autoCorrectEnabled = spellCheckEnabled),
-            visualTransformation = positivePromptTransformation,
-            leadingIcon = {
-                PromptPresetDropdown(
-                    favorites = presetUiState.favorites,
-                    activePresetId = presetUiState.activePresetId,
-                    currentPromptIsEmpty = uiState.positivePrompt.isEmpty(),
-                    onPresetSelected = { presetViewModel.onPresetSelected(it) },
-                    onOpenLibrary = { presetViewModel.showLibrary() },
-                    onSaveCurrentPrompt = { presetViewModel.showSaveDialog(uiState.positivePrompt) },
-                    onResetPrompt = { presetViewModel.resetPrompt() }
-                )
-            },
-            trailingIcon = {
-                if (uiState.positivePrompt.isNotEmpty()) {
-                    IconButton(onClick = { textToImageViewModel.onPositivePromptChange("") }) {
-                        Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.content_description_clear))
-                    }
-                }
-            }
+            visualTransformation = positivePromptTransformation
         )
     }
 
-    val negativeLine: @Composable () -> Unit = {
-        if (caps.hasNegativePrompt) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+    // Prompt presets (bookmark) and clear, in their own row under the prompt
+    val promptTools: @Composable () -> Unit = {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            PromptPresetDropdown(
+                favorites = presetUiState.favorites,
+                activePresetId = presetUiState.activePresetId,
+                currentPromptIsEmpty = uiState.positivePrompt.isEmpty(),
+                onPresetSelected = { presetViewModel.onPresetSelected(it) },
+                onOpenLibrary = { presetViewModel.showLibrary() },
+                onSaveCurrentPrompt = { presetViewModel.showSaveDialog(uiState.positivePrompt) },
+                onResetPrompt = { presetViewModel.resetPrompt() }
+            )
+            Spacer(Modifier.weight(1f))
+            IconButton(
+                onClick = { textToImageViewModel.onPositivePromptChange("") },
+                enabled = uiState.positivePrompt.isNotEmpty()
             ) {
-                Text("NEG", color = Brand.NegRed, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                Spacer(Modifier.width(8.dp))
-                BasicTextField(
-                    value = uiState.negativePrompt,
-                    onValueChange = textToImageViewModel::onNegativePromptChange,
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.weight(1f).padding(vertical = 6.dp)
-                )
-            }
-        }
-    }
-
-    val favoritesRow: @Composable () -> Unit = {
-        if (presetUiState.favorites.isNotEmpty()) {
-            ChipRow {
-                presetUiState.favorites.forEach { preset ->
-                    PillChip(preset.name, onClick = { presetViewModel.onPresetSelected(preset.id) }, leading = "★")
-                }
-            }
-        }
-    }
-
-    val ratioRow: @Composable () -> Unit = {
-        if (caps.hasWidth && caps.hasHeight) {
-            ResolutionPresetRow(
-                width = uiState.width,
-                height = uiState.height,
-                onSelect = { w, h ->
-                    textToImageViewModel.onWidthChange(w.toString())
-                    textToImageViewModel.onHeightChange(h.toString())
-                }
-            )
-        }
-    }
-
-    val paramsRow: @Composable () -> Unit = {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (caps.hasSteps) ParamTile(stringResource(R.string.label_steps), uiState.steps, { editParam = "steps" }, Modifier.weight(1f))
-            if (caps.hasCfg) ParamTile(stringResource(R.string.label_cfg), uiState.cfg, { editParam = "cfg" }, Modifier.weight(1f))
-            if (caps.hasSeed) ParamTile(
-                stringResource(R.string.label_seed),
-                if (uiState.randomSeed) "🎲" else uiState.seed,
-                { editParam = "seed" }, Modifier.weight(1f)
-            )
-            if (caps.hasSamplerName) ParamTile(stringResource(R.string.label_sampler), uiState.sampler, { editParam = "sampler" }, Modifier.weight(1f))
-            ParamTile(stringResource(R.string.label_more), "⋯", { showOptionsBottomSheet = true }, Modifier.weight(0.8f))
-        }
-    }
-
-    val loraRow: @Composable () -> Unit = {
-        if (caps.hasLora) {
-            ChipRow {
-                uiState.loraChain.forEach { lora ->
-                    PillChip(
-                        "${lora.name.substringAfterLast('/').substringBeforeLast('.')}  ${"%.1f".format(lora.strength)}",
-                        onClick = { showOptionsBottomSheet = true }, accent = true
-                    )
-                }
-                PillChip("+ LoRA", onClick = {
-                    textToImageViewModel.onAddLora()
-                    showOptionsBottomSheet = true
-                }, dashed = true)
+                Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.content_description_clear))
             }
         }
     }
 
     val generateRow: @Composable () -> Unit = {
-        Row(Modifier.fillMaxWidth().height(56.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().height(56.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             GenerationButton(
                 queueSize = queueState.totalQueueSize,
                 isExecuting = queueState.isExecuting,
@@ -607,15 +619,13 @@ fun TextToImageScreen(
                 },
                 modifier = Modifier.weight(1f)
             )
-            if (caps.hasBatchSize) {
-                BatchTile(uiState.batchSize, textToImageViewModel::onBatchSizeChange, Modifier.fillMaxHeight())
-            }
-            // All workflow settings (models, LoRA, sampler, ...) in the options sheet
+            // Gallery shortcut
             OutlinedIconButton(
-                onClick = { showOptionsBottomSheet = true },
+                onClick = { mainNav?.onOpenGallery?.invoke() },
+                enabled = mainNav != null,
                 modifier = Modifier.size(56.dp)
             ) {
-                Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.button_options))
+                Icon(Icons.Default.GridView, contentDescription = stringResource(R.string.nav_gallery))
             }
         }
     }
@@ -625,7 +635,6 @@ fun TextToImageScreen(
         ?: uiState.previewBitmap?.let { it.width.toFloat() / it.height }
         ?: 1f
 
-    val metaInfo = metaText(uiState.previewBitmap, if (uiState.randomSeed) null else uiState.seed, uiState.selectedWorkflow.ifEmpty { null })
 
     // ---------- Layout ----------
 
@@ -638,12 +647,20 @@ fun TextToImageScreen(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 8.dp)
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp)
                 ) {
-                    workflowChip(Modifier.weight(1f, fill = false))
-                    Spacer(Modifier.weight(1f))
                     ModeMenuButton()
+                    Spacer(Modifier.weight(1f))
                     serverMenu()
+                }
+                // Workflow and album on their own row (not enough width next to the mode button)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp)
+                ) {
+                    workflowDropdown(Modifier.weight(1f))
+                    albumDropdown()
                 }
 
                 Column(
@@ -671,39 +688,33 @@ fun TextToImageScreen(
                                     contentScale = ContentScale.Fit
                                 )
                             }
-                            ProgressPill(generationState.progress, generationState.maxProgress, Modifier.align(Alignment.TopStart).padding(10.dp), active = progressVisible)
-                            Row(
-                                Modifier.align(Alignment.TopEnd).padding(10.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) { imageActions() }
-                            if (uiState.previewBitmap != null && metaInfo.isNotEmpty()) {
-                                MetaLine(metaInfo, Modifier.align(Alignment.BottomStart).padding(10.dp))
-                            }
+                            ProgressPill(generationState.progress, generationState.maxProgress, Modifier.align(Alignment.TopStart).padding(10.dp), active = progressVisible, label = batchLabel)
                         }
                         }
 
+                        metaRow(Modifier)
                         RecentResultsStrip(
                             selectedKey = selectedRecent?.toCacheKey()?.keyString,
-                            onSelect = { showRecent(it) }
+                            onSelect = { showRecent(it) },
+                            showGalleryButton = false,
+                            album = currentAlbum
                         )
                     }
 
                     GenCard(if (expandPrompt) Modifier.weight(1f).fillMaxWidth() else Modifier.fillMaxWidth()) {
-                        Column((if (expandPrompt) Modifier.fillMaxSize() else Modifier.fillMaxWidth()).padding(horizontal = 8.dp, vertical = 6.dp)) {
+                        Column(
+                            (if (expandPrompt) Modifier.fillMaxSize() else Modifier.fillMaxWidth()).padding(4.dp),
+                            verticalArrangement = Arrangement.Center
+                        ) {
                             promptField(
                                 if (expandPrompt) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth(),
                                 expandPrompt
                             )
-                            negativeLine()
+                            promptTools()
                         }
                     }
 
-                    if (!expandPrompt) {
-                        favoritesRow()
-                        ratioRow()
-                        paramsRow()
-                        loraRow()
-                    }
+                    if (!expandPrompt) ratioRow()
                     generateRow()
                 }
             }
@@ -720,29 +731,14 @@ fun TextToImageScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth().padding(14.dp)
                         ) {
-                            Text(
-                                buildAnnotatedString {
-                                    withStyle(SpanStyle(color = Brand.Lime)) { append("C") }
-                                    withStyle(SpanStyle(color = Brand.Blue)) { append("M") }
-                                },
-                                fontWeight = FontWeight.ExtraBold, fontSize = 18.sp
-                            )
+                            ProgressPill(generationState.progress, generationState.maxProgress, translucent = false, active = progressVisible, label = batchLabel)
                             Spacer(Modifier.width(12.dp))
                             ModeTabs(Modifier.weight(1f))
                         }
                         HorizontalDivider()
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxWidth().height(58.dp).padding(horizontal = 14.dp)
-                        ) {
-                            ProgressPill(generationState.progress, generationState.maxProgress, translucent = false, active = progressVisible)
-                            Spacer(Modifier.weight(1f))
-                            imageActions()
-                        }
                         FitAspectBox(
                             ratio = previewRatio,
-                            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp),
+                            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp).padding(top = 14.dp),
                             boxModifier = Modifier
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(MaterialTheme.colorScheme.background)
@@ -758,12 +754,12 @@ fun TextToImageScreen(
                             }
                         }
                         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            if (metaInfo.isNotEmpty() && uiState.previewBitmap != null) {
-                                Text(metaInfo, fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                            metaRow(Modifier)
                             RecentResultsStrip(
                                 selectedKey = selectedRecent?.toCacheKey()?.keyString,
-                                onSelect = { showRecent(it) }
+                                onSelect = { showRecent(it) },
+                                showGalleryButton = false,
+                                album = currentAlbum
                             )
                         }
                     }
@@ -774,23 +770,22 @@ fun TextToImageScreen(
                     Modifier.weight(0.85f).fillMaxHeight(),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        workflowChip(Modifier.weight(1f))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        workflowDropdown(Modifier.weight(1f))
+                        albumDropdown()
                         serverMenu()
                     }
                     GenCard(Modifier.fillMaxWidth().weight(1f)) {
-                        Column(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp)) {
+                        Column(Modifier.fillMaxSize().padding(4.dp), verticalArrangement = Arrangement.Center) {
                             promptField(Modifier.fillMaxWidth().weight(1f), true)
-                            negativeLine()
+                            promptTools()
                         }
                     }
-                    // While typing, keep only the prompt + generate so the keyboard never hides the field
-                    if (!expandPrompt) {
-                        favoritesRow()
-                        ratioRow()
-                        paramsRow()
-                        loraRow()
-                    }
+                    if (!expandPrompt) ratioRow()
                     generateRow()
                 }
             }

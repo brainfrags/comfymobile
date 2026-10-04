@@ -35,6 +35,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.material3.Slider
+import sh.hnet.comfychair.storage.AppSettings
+import kotlin.math.roundToInt
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -423,6 +427,26 @@ fun ApplicationSettingsScreen(
                         checked = isSaveToPhoneEnabled,
                         onCheckedChange = { viewModel.setSaveToPhoneEnabled(context, it) }
                     )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Slideshow: time each picture stays on screen
+                run {
+                    var slideshowSeconds by remember { mutableIntStateOf(AppSettings.getSlideshowSeconds(context)) }
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = stringResource(R.string.label_slideshow_seconds, slideshowSeconds),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Slider(
+                            value = slideshowSeconds.toFloat(),
+                            onValueChange = { slideshowSeconds = it.roundToInt() },
+                            onValueChangeFinished = { AppSettings.setSlideshowSeconds(context, slideshowSeconds) },
+                            valueRange = AppSettings.SLIDESHOW_SECONDS_MIN.toFloat()..AppSettings.SLIDESHOW_SECONDS_MAX.toFloat(),
+                            steps = AppSettings.SLIDESHOW_SECONDS_MAX - AppSettings.SLIDESHOW_SECONDS_MIN - 1
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))

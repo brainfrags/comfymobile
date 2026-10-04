@@ -1,5 +1,15 @@
 package sh.hnet.comfychair.ui.screens
 
+import sh.hnet.comfychair.ui.components.generate.ratioOf
+import sh.hnet.comfychair.ui.components.generate.WorkflowSplitDropdown
+import sh.hnet.comfychair.ui.components.generate.SmallActionIcon
+import sh.hnet.comfychair.ui.components.generate.PromptCardContent
+import sh.hnet.comfychair.ui.components.generate.ProgressPill
+import sh.hnet.comfychair.ui.components.generate.MetaActionsRow
+import sh.hnet.comfychair.ui.components.generate.GenerationScreenLayout
+import sh.hnet.comfychair.ui.components.generate.GenerateWithGalleryRow
+import sh.hnet.comfychair.ui.components.generate.AlbumDropdown
+import sh.hnet.comfychair.repository.AlbumRepository
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
@@ -250,107 +260,112 @@ fun TextToVideoScreen(
         }
     }
 
-    // UI composition
-    Column(modifier = Modifier.fillMaxSize()) {
-        // Top App Bar with save/share actions
-        TopAppBar(
-            title = {
-                WorkflowChip(
-                    workflows = uiState.availableWorkflows.map { it.name },
-                    selected = uiState.selectedWorkflow,
-                    onSelect = textToVideoViewModel::onWorkflowChange
-                )
-            },
-            windowInsets = WindowInsets(0, 0, 0, 0),
-            actions = {
-                // Save to gallery button (only when video exists)
-                if (videoUri != null) {
-                    IconButton(onClick = {
-                        scope.launch {
-                            VideoUtils.saveVideoToGallery(context, videoUri, VideoUtils.GalleryPrefix.TEXT_TO_VIDEO)
-                        }
-                    }) {
-                        Icon(Icons.Default.Save, contentDescription = stringResource(R.string.button_save_to_gallery))
-                    }
-                    // Share button
-                    IconButton(onClick = {
-                        VideoUtils.shareVideo(context, videoUri)
-                    }) {
-                        Icon(Icons.Default.Share, contentDescription = stringResource(R.string.button_share))
-                    }
-                }
-                // Menu button
-                ModeMenuButton()
-                AppMenuDropdown(
-                    onSettings = onNavigateToSettings,
-                    onLogout = onLogout
+    // ---------- Pieces ----------
+
+    // Album new videos go into (shared with the other modes and the gallery)
+    LaunchedEffect(Unit) { AlbumRepository.ensureLoaded(context) }
+    val albums by AlbumRepository.albums.collectAsState()
+    val currentAlbumId by AlbumRepository.currentAlbumId.collectAsState()
+    val currentAlbum = albums.firstOrNull { it.id == currentAlbumId }
+
+    val progressVisible = isThisScreenExecuting && generationState.maxProgress > 0 && generationState.progress > 0
+    val batchLabel = if (queueState.batchTotal > 0) "${queueState.completedInBatch}/${queueState.batchTotal}" else null
+
+    fun generate(front: Boolean) {
+        val workflowJson = textToVideoViewModel.prepareWorkflow()
+        if (workflowJson == null) {
+            Toast.makeText(context, context.getString(R.string.error_failed_load_workflow), Toast.LENGTH_SHORT).show()
+            return
+        }
+        generationViewModel.startGeneration(
+            workflowJson,
+            TextToVideoViewModel.OWNER_ID,
+            ContentType.VIDEO,
+            front = front
+        ) { success, promptId, errorMessage ->
+            if (success && promptId != null) AlbumRepository.addPromptToCurrent(promptId)
+            if (!success) {
+                Toast.makeText(
+                    context,
+                    errorMessage ?: context.getString(R.string.error_generation_failed),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    // Preview card follows the video size (falls back to the live preview, then 16:9)
+    val previewRatio = ratioOf(uiState.width, uiState.height)
+        ?: uiState.previewBitmap?.let { it.width.toFloat() / it.height }
+        ?: (16f / 9f)
+    val videoInfo = "${uiState.width}×${uiState.height} · ${uiState.length}f · ${uiState.fps}fps"
+
+    // ---------- Layout ----------
+
+    GenerationScreenLayout(
+        expandPrompt = expandPrompt,
+        previewRatio = previewRatio,
+        onPreviewClick = videoUri?.let { uri ->
+            {
+                context.startActivity(
+                    MediaViewerActivity.createSingleVideoIntent(
+                        context = context,
+                        videoUri = uri,
+                        hostname = generationViewModel.getHostname(),
+                        port = generationViewModel.getPort()
+                    )
                 )
             }
-        )
-
-        // Progress indicator - below app bar, only show if THIS screen's job is executing
-        if (isThisScreenExecuting && generationState.maxProgress > 0) {
-            GenerationProgressBar(
-                progress = generationState.progress,
-                maxProgress = generationState.maxProgress,
-                modifier = Modifier.fillMaxWidth()
+        },
+        progress = { m, translucent ->
+            ProgressPill(
+                generationState.progress, generationState.maxProgress, m,
+                translucent = translucent, active = progressVisible, label = batchLabel
             )
-        }
-
-        // Wide screens (tablet / unfolded): preview on the left, controls on the right
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth().weight(1f)) {
-        val isWide = maxWidth >= 600.dp
-
-        val previewContent: @Composable (Modifier) -> Unit = { boxModifier ->
-            Box(modifier = boxModifier) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .heightIn(min = 150.dp)
-                    .background(MaterialTheme.colorScheme.background)
-                    .clickable(enabled = videoUri != null) {
-                    // Launch MediaViewer for single video
-                        videoUri?.let { uri ->
-                            val intent = MediaViewerActivity.createSingleVideoIntent(
-                                context = context,
-                                videoUri = uri,
-                                hostname = generationViewModel.getHostname(),
-                                port = generationViewModel.getPort()
-                            )
-                            context.startActivity(intent)
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                when {
-                    // Show preview bitmap during generation
-                    uiState.previewBitmap != null -> {
-                        Image(
-                            bitmap = uiState.previewBitmap!!.asImageBitmap(),
-                            contentDescription = stringResource(R.string.content_description_preview),
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    }
-                    // Show video player when video is available
-                    videoUri != null -> {
-                        VideoPlayer(
-                            videoUri = videoUri,
-                            modifier = Modifier.fillMaxSize(),
-                            isActive = isScreenVisible
-                        )
-                    }
-                    // Show placeholder - app logo
-                    else -> {
+        },
+        workflowDropdown = { m ->
+            WorkflowSplitDropdown(
+                workflows = uiState.availableWorkflows.map { it.name },
+                selected = uiState.selectedWorkflow,
+                onSelect = textToVideoViewModel::onWorkflowChange,
+                onSettings = { showOptionsSheet = true },
+                settingsDescription = stringResource(R.string.button_options),
+                modifier = m
+            )
+        },
+        albumDropdown = {
+            AlbumDropdown(albums = albums, selectedId = currentAlbumId, onSelect = { AlbumRepository.select(it) })
+        },
+        serverMenu = {
+            AppMenuDropdown(onSettings = onNavigateToSettings, onLogout = onLogout)
+        },
+        previewContent = {
+            when {
+                // Live preview during generation
+                uiState.previewBitmap != null -> Image(
+                    bitmap = uiState.previewBitmap!!.asImageBitmap(),
+                    contentDescription = stringResource(R.string.content_description_preview),
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit
+                )
+                videoUri != null -> VideoPlayer(
+                    videoUri = videoUri,
+                    modifier = Modifier.fillMaxSize(),
+                    isActive = isScreenVisible
+                )
+            }
+        },
+        belowPreview = {
+            MetaActionsRow(info = videoInfo) {
+                SmallActionIcon(Icons.Default.Save, stringResource(R.string.button_save_to_gallery), videoUri != null) {
+                    videoUri?.let { uri ->
+                        scope.launch { VideoUtils.saveVideoToGallery(context, uri, VideoUtils.GalleryPrefix.TEXT_TO_VIDEO) }
                     }
                 }
+                SmallActionIcon(Icons.Default.Share, stringResource(R.string.button_share), videoUri != null) {
+                    videoUri?.let { VideoUtils.shareVideo(context, it) }
+                }
             }
-            }
-        }
-
-        val controlsContent: @Composable ColumnScope.() -> Unit = {
-        // Recent results + gallery button (replaces the old bottom bar)
-        if (!expandPrompt) {
             RecentResultsStrip(
                 selectedKey = null,
                 onSelect = { item ->
@@ -366,172 +381,59 @@ fun TextToVideoScreen(
                         )
                     )
                 },
-                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp)
+                showGalleryButton = false,
+                album = currentAlbum
             )
-        }
-        // Prompt Input — expands to fill screen above keyboard when focused
-        OutlinedTextField(
-            value = uiState.positivePrompt,
-            onValueChange = {
-                textToVideoViewModel.onPositivePromptChange(it)
-                presetViewModel.clearActivePreset()
-            },
-            label = { Text(stringResource(R.string.hint_prompt)) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (expandPrompt || isWide) Modifier.weight(1f) else Modifier)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .onFocusChanged { promptFocused = it.isFocused },
-            minLines = 3,
-            maxLines = if (expandPrompt || isWide) Int.MAX_VALUE else 4,
-            keyboardOptions = KeyboardOptions(autoCorrectEnabled = spellCheckEnabled),
-            visualTransformation = positivePromptTransformation,
-            leadingIcon = {
-                PromptPresetDropdown(
-                    favorites = presetUiState.favorites,
-                    activePresetId = presetUiState.activePresetId,
-                    currentPromptIsEmpty = uiState.positivePrompt.isEmpty(),
-                    onPresetSelected = { presetViewModel.onPresetSelected(it) },
-                    onOpenLibrary = { presetViewModel.showLibrary() },
-                    onSaveCurrentPrompt = { presetViewModel.showSaveDialog(uiState.positivePrompt) },
-                    onResetPrompt = { presetViewModel.resetPrompt() }
-                )
-            },
-            trailingIcon = {
-                if (uiState.positivePrompt.isNotEmpty()) {
-                    IconButton(onClick = {
-                        textToVideoViewModel.onPositivePromptChange("")
-                        presetViewModel.clearActivePreset()
-                    }) {
-                        Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.content_description_clear))
-                    }
+        },
+        prompt = { fill ->
+            PromptCardContent(
+                value = uiState.positivePrompt,
+                onValueChange = {
+                    textToVideoViewModel.onPositivePromptChange(it)
+                    presetViewModel.clearActivePreset()
+                },
+                fill = fill,
+                onFocusChanged = { promptFocused = it },
+                autoCorrect = spellCheckEnabled,
+                visualTransformation = positivePromptTransformation,
+                presetButton = {
+                    PromptPresetDropdown(
+                        favorites = presetUiState.favorites,
+                        activePresetId = presetUiState.activePresetId,
+                        currentPromptIsEmpty = uiState.positivePrompt.isEmpty(),
+                        onPresetSelected = { presetViewModel.onPresetSelected(it) },
+                        onOpenLibrary = { presetViewModel.showLibrary() },
+                        onSaveCurrentPrompt = { presetViewModel.showSaveDialog(uiState.positivePrompt) },
+                        onResetPrompt = { presetViewModel.resetPrompt() }
+                    )
                 }
-            }
-        )
-
-        // Generate and Options buttons
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 16.dp)
-        ) {
-            GenerationButton(
-                queueSize = queueState.totalQueueSize,
-                isExecuting = queueState.isExecuting,
-                isEnabled = textToVideoViewModel.hasValidConfiguration() && uiState.positivePrompt.isNotBlank(),
-                isOfflineMode = isOfflineMode,
-                isFetching = uiState.isFetching,
-                isConnecting = isConnecting,
-                onGenerate = {
-                    val workflowJson = textToVideoViewModel.prepareWorkflow()
-                    if (workflowJson != null) {
-                        generationViewModel.startGeneration(
-                            workflowJson,
-                            TextToVideoViewModel.OWNER_ID,
-                            ContentType.VIDEO
-                        ) { success, _, errorMessage ->
-                            if (!success) {
-                                Toast.makeText(
-                                    context,
-                                    errorMessage ?: context.getString(R.string.error_generation_failed),
-                                    Toast.LENGTH_LONG
-                                ).show()
+            )
+        },
+        generateRow = {
+            GenerateWithGalleryRow {
+                GenerationButton(
+                    queueSize = queueState.totalQueueSize,
+                    isExecuting = queueState.isExecuting,
+                    isEnabled = textToVideoViewModel.hasValidConfiguration() && uiState.positivePrompt.isNotBlank(),
+                    isOfflineMode = isOfflineMode,
+                    isFetching = uiState.isFetching,
+                    isConnecting = isConnecting,
+                    onGenerate = { generate(front = false) },
+                    onCancelCurrent = { generationViewModel.cancelGeneration { } },
+                    onAddToFrontOfQueue = { generate(front = true) },
+                    onClearQueue = {
+                        generationViewModel.getClient()?.clearQueue { success ->
+                            val messageRes = if (success) R.string.msg_queue_cleared_success else R.string.error_queue_clear
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
                             }
                         }
-                    } else {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.error_failed_load_workflow),
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                },
-                onCancelCurrent = { generationViewModel.cancelGeneration { } },
-                onAddToFrontOfQueue = {
-                    val workflowJson = textToVideoViewModel.prepareWorkflow()
-                    if (workflowJson != null) {
-                        generationViewModel.startGeneration(
-                            workflowJson,
-                            TextToVideoViewModel.OWNER_ID,
-                            ContentType.VIDEO,
-                            front = true
-                        ) { success, _, errorMessage ->
-                            if (!success) {
-                                Toast.makeText(
-                                    context,
-                                    errorMessage ?: context.getString(R.string.error_generation_failed),
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
-                        }
-                    } else {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.error_failed_load_workflow),
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                },
-                onClearQueue = {
-                    generationViewModel.getClient()?.clearQueue { success ->
-                        val messageRes = if (success) R.string.msg_queue_cleared_success
-                                       else R.string.error_queue_clear
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                },
-                modifier = Modifier.weight(1f)
-            )
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Animate gear icon rotation when options sheet is shown
-            val optionsIconRotation by animateFloatAsState(
-                targetValue = if (showOptionsSheet) 90f else 0f,
-                label = "options icon rotation"
-            )
-
-            OutlinedIconButton(
-                onClick = { showOptionsSheet = true },
-                modifier = Modifier.size(56.dp)
-            ) {
-                Icon(
-                    Icons.Default.Settings,
-                    contentDescription = stringResource(R.string.button_options),
-                    modifier = Modifier.rotate(optionsIconRotation)
+                    },
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
-        }
-
-        if (isWide) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                previewContent(Modifier.weight(1f).fillMaxHeight())
-                Column(
-                    modifier = Modifier.weight(1f).fillMaxHeight().padding(top = 8.dp),
-                    verticalArrangement = Arrangement.Bottom
-                ) {
-                    controlsContent()
-                }
-            }
-        } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-        // Video preview area — collapses when typing in the prompt field
-        AnimatedVisibility(
-            visible = !expandPrompt,
-            modifier = Modifier.weight(1f),
-            enter = fadeIn(tween(150)),
-            exit = ExitTransition.None
-        ) {
-            previewContent(Modifier.fillMaxSize())
-        }
-                controlsContent()
-            }
-        }
-        } // End of BoxWithConstraints
-    } // End of outer Column
+    )
 
     // Options bottom sheet
     if (showOptionsSheet) {
