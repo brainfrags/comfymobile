@@ -29,7 +29,7 @@ from aiohttp import web
 import folder_paths
 from server import PromptServer
 
-VERSION = 1
+VERSION = 2  # 2: move_folder
 MEDIA_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".jfif", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif", ".heic",
     ".mp4", ".m4v", ".webm", ".mov", ".avi", ".mkv",

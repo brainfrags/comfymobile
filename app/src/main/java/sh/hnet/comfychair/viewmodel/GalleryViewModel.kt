@@ -381,6 +381,8 @@ class GalleryViewModel : ViewModel() {
             try {
                 val failed = move()
                 _events.emit(GalleryEvent.ShowToast(if (failed == 0) successMessage else R.string.msg_some_items_failed_to_move))
+                // An older extension can't move whole folders (other files keep the old folder)
+                if (repository.isFileOpsOutdated) _events.emit(GalleryEvent.ShowToast(R.string.msg_extension_outdated))
             } finally {
                 _viewState.value = _viewState.value.copy(isMoving = false)
             }

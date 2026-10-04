@@ -704,4 +704,5 @@
     <string name="album_sort_name">Name</string>
     <string name="album_sort_recent">Zuletzt hinzugefügt</string>
     <string name="album_sort_count">Meiste Bilder</string>
+    <string name="msg_extension_outdated">Aktualisiere die ComfyMobile-Erweiterung auf dem PC (und starte ComfyUI neu), damit Alben vollständig umbenannt und gelöscht werden können</string>
 </resources>

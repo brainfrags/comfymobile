@@ -706,4 +706,5 @@
     <string name="album_sort_name">Nombre</string>
     <string name="album_sort_recent">Añadido recientemente</string>
     <string name="album_sort_count">Más imágenes</string>
+    <string name="msg_extension_outdated">Actualiza la extensión ComfyMobile en el PC (y reinicia ComfyUI) para poder renombrar y eliminar álbumes por completo</string>
 </resources>

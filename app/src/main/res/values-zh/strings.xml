@@ -706,4 +706,5 @@
     <string name="album_sort_name">名称</string>
     <string name="album_sort_recent">最近添加</string>
     <string name="album_sort_count">图片最多</string>
+    <string name="msg_extension_outdated">请在电脑上更新 ComfyMobile 扩展（并重启 ComfyUI），以便完整地重命名和删除相册</string>
 </resources>

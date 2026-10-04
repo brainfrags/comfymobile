@@ -735,4 +735,5 @@
     <string name="album_sort_name">Name</string>
     <string name="album_sort_recent">Recently added</string>
     <string name="album_sort_count">Most images</string>
+    <string name="msg_extension_outdated">Update the ComfyMobile extension on the PC (and restart ComfyUI) so albums can be renamed and deleted completely</string>
 </resources>

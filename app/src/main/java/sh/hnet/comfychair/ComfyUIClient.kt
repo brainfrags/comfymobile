@@ -1476,6 +1476,11 @@ class ComfyUIClient(
     var hasFileOps: Boolean = false
         private set
 
+    /** Version of the ComfyMobile extension (0 = not installed; 2+ can move whole folders). */
+    @Volatile
+    var fileOpsVersion: Int = 0
+        private set
+
     /**
      * For the ComfyMobile extension: listing, comparing and moving files of a big output
      * folder can take much longer than the 10 s of [httpClient].
@@ -1538,6 +1543,7 @@ class ComfyUIClient(
                 val files = json.optJSONArray("files") ?: org.json.JSONArray()
                 val folders = json.optJSONArray("folders") ?: org.json.JSONArray()
                 hasFileOps = true
+                fileOpsVersion = json.optInt("version", 1)
                 return OutputListing(
                     files = (0 until files.length()).map { files.getString(it) }.filter { isMediaFile(it) },
                     folders = (0 until folders.length()).map { folders.getString(it) },
@@ -1548,6 +1554,7 @@ class ComfyUIClient(
             }
         }
         hasFileOps = false
+        fileOpsVersion = 0
 
         val result = LinkedHashSet<String>()
 

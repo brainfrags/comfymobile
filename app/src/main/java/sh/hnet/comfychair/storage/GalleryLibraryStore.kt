@@ -41,7 +41,8 @@ object GalleryLibraryStore {
     private const val FILE = "library.json"
 
     /** Stable identity of the file behind a gallery item. */
-    fun fileId(item: GalleryItem): String = "${item.type}/${item.subfolder}/${item.filename}"
+    fun fileId(item: GalleryItem): String =
+        "${item.type}/${item.subfolder.replace('\\', '/').trim('/')}/${item.filename}"
 
     /** File id of a path relative to the output folder ("sub/a.png"). */
     fun outputFileId(path: String): String =

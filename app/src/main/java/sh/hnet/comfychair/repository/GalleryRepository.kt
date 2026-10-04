@@ -562,15 +562,27 @@ class GalleryRepository private constructor() {
     suspend fun moveFolder(from: String, to: String): Int {
         val client = comfyUIClient ?: return 1
         // Show the renamed album right away (empty until the files are moved)
-        if (to.isNotEmpty()) updateLibrary { lib -> lib.copy(folders = lib.folders + to) }
+        val addedTarget = to.isNotEmpty() && to !in _library.value.folders
+        if (addedTarget) updateLibrary { lib -> lib.copy(folders = lib.folders + to) }
+
+        // Whole folder at once (extension 2+), else image by image
+        val wholeFolder = if (client.hasFileOps && client.fileOpsVersion >= 2) {
+            withContext(Dispatchers.IO) { client.moveOutputFolder(from, to) }
+        } else null
         val failed: Int
-        if (client.hasFileOps) {
-            val moved = withContext(Dispatchers.IO) { client.moveOutputFolder(from, to) } ?: return 1
-            recordMoves(moved.entries.associate { (old, new) -> GalleryLibraryStore.outputFileId(old) to new }, copied = false)
+        if (wholeFolder != null) {
+            recordMoves(wholeFolder.entries.associate { (old, new) -> GalleryLibraryStore.outputFileId(old) to new }, copied = false)
             failed = 0
         } else {
-            failed = moveToFolder(itemsInFolder(from), to)
+            val items = itemsInFolder(from)
+            failed = moveToFolder(items, to)
+            if (items.isNotEmpty() && failed == items.size) {
+                // Nothing could be moved: don't leave an empty renamed album behind
+                if (addedTarget) updateLibrary { lib -> lib.copy(folders = lib.folders - to) }
+                return failed
+            }
         }
+
         updateLibrary { lib ->
             lib.copy(
                 folders = (lib.folders - from).let { if (to.isNotEmpty()) it + to else it },
@@ -581,13 +593,18 @@ class GalleryRepository private constructor() {
         _serverFolders.value = _serverFolders.value
             .filterNot { it == from || it.startsWith("$from/") }
             .let { if (to.isNotEmpty() && to !in it) it + to else it }
-        if (!client.hasFileOps) {
+        if (wholeFolder == null) {
             if (to.isNotEmpty()) createFolder(to)
+            // Only removed when empty; other files keep the old folder on the PC
             removeFolder(from)
         }
         refresh()
         return failed
     }
+
+    /** True when the PC's ComfyMobile extension is older than this app needs. */
+    val isFileOpsOutdated: Boolean
+        get() = comfyUIClient?.let { it.hasFileOps && it.fileOpsVersion < 2 } == true
 
     /** Move what [promptId] generates into [folder] once it shows up in the gallery. */
     fun queuePromptMove(promptId: String, folder: String) {
