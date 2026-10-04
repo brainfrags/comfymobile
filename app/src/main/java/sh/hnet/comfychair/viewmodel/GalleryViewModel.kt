@@ -289,8 +289,7 @@ class GalleryViewModel : ViewModel() {
     private fun folderOf(albumId: String) = AlbumRepository.folderOf(albumId)
 
     /** A name usable as a folder name on Windows, macOS and Linux. */
-    private fun folderName(name: String): String =
-        name.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_").trim('.', ' ')
+    private fun folderName(name: String): String = AlbumRepository.folderName(name)
 
     /** Move items into an album folder ("" = output root) in the background and report the result. */
     private fun moveItems(items: List<GalleryItem>, folder: String, successMessage: Int, after: suspend () -> Unit = {}) {

@@ -82,6 +82,31 @@ object AlbumRepository {
             }
     }
 
+    /** A name usable as a folder name on Windows, macOS and Linux. */
+    fun folderName(name: String): String =
+        name.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_").trim('.', ' ')
+
+    /**
+     * Turn app-only albums into output subfolders (same name): their files are moved into the
+     * folder, the cover and the selection follow, and the app-only album is removed. An album
+     * whose files could not all be moved is kept and tried again on the next sync.
+     */
+    suspend fun convertLocalAlbumsToFolders() {
+        for (album in _localAlbums.value) {
+            val folder = folderName(album.name).ifEmpty { "Album" }
+            val members = gallery.galleryItems.value.filter { album.contains(it.promptId, itemKey(it)) }
+            gallery.createFolder(folder)
+            if (gallery.moveToFolder(members, folder) > 0) continue
+            val folderId = folderAlbumId(folder)
+            gallery.library.value.covers[album.id]?.let {
+                gallery.setAlbumCover(folderId, it)
+                gallery.setAlbumCover(album.id, null)
+            }
+            if (_currentAlbumId.value == album.id) select(folderId)
+            update { list -> list.filterNot { it.id == album.id } }
+        }
+    }
+
     /** Load albums for the current server (no-op if already loaded). Safe to call often. */
     @Synchronized
     fun ensureLoaded(context: Context) {

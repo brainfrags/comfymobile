@@ -673,7 +673,7 @@
     <string name="gallery_restore">Restaurar</string>
     <string name="gallery_delete_forever">Eliminar definitivamente</string>
     <string name="gallery_empty_trash">Vaciar papelera</string>
-    <string name="gallery_delete_forever_confirm">¿Eliminar definitivamente %d elementos? No se puede deshacer. Los archivos permanecen en la carpeta output de ComfyUI.</string>
+    <string name="gallery_delete_forever_confirm">¿Eliminar definitivamente %d elementos? No se puede deshacer. Con la extensión ComfyMobile en el PC, los archivos también se eliminan allí.</string>
     <string name="gallery_folder_album">Carpeta output</string>
     <string name="msg_moved_to_album">Movido al álbum</string>
     <string name="msg_some_items_failed_to_move">Algunos archivos no se pudieron mover</string>

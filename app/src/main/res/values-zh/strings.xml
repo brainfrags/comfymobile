@@ -673,7 +673,7 @@
     <string name="gallery_restore">恢复</string>
     <string name="gallery_delete_forever">永久删除</string>
     <string name="gallery_empty_trash">清空回收站</string>
-    <string name="gallery_delete_forever_confirm">永久删除 %d 个项目？此操作无法撤销。文件仍保留在 ComfyUI 的 output 文件夹中。</string>
+    <string name="gallery_delete_forever_confirm">永久删除 %d 个项目？此操作无法撤销。若电脑上安装了 ComfyMobile 扩展，文件也会在电脑上删除。</string>
     <string name="gallery_folder_album">Output 文件夹</string>
     <string name="msg_moved_to_album">已移至相册</string>
     <string name="msg_some_items_failed_to_move">部分文件无法移动</string>

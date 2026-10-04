@@ -294,6 +294,7 @@ class GalleryRepository private constructor() {
                     outputFileItem(path).takeIf { GalleryLibraryStore.fileId(it) !in known }
                 }
                 _serverFolders.value = listing.folders
+                if (listing.fileOps) startServerSync(client, listing.files)
             }
 
             val previousCount = _galleryItems.value.size
@@ -590,6 +591,38 @@ class GalleryRepository private constructor() {
         return deleted.size
     }
 
+    private var serverSyncJob: Job? = null
+
+    /**
+     * Make the PC's output folder match the app (ComfyMobile extension only):
+     * - files deleted in the app (or originals left behind by copying) are deleted on the PC
+     * - album folders made in the app are created on the PC
+     * - app-only albums become output subfolders, their files moved into them
+     */
+    private fun startServerSync(client: ComfyUIClient, listedFiles: List<String>) {
+        if (serverSyncJob?.isActive == true) return
+        serverSyncJob = scope.launch {
+            try {
+                val purged = _library.value.purged
+                val leftovers = listedFiles.filter { GalleryLibraryStore.outputFileId(it) in purged }
+                if (leftovers.isNotEmpty()) {
+                    DebugLogger.i(TAG, "Deleting ${leftovers.size} files deleted in the app")
+                    withContext(Dispatchers.IO) { client.deleteOutputFiles(leftovers) }
+                }
+
+                val missing = _library.value.folders - _serverFolders.value.toSet()
+                if (missing.isNotEmpty()) {
+                    withContext(Dispatchers.IO) { missing.forEach { client.createOutputFolder(it) } }
+                    _serverFolders.value = _serverFolders.value + missing
+                }
+
+                AlbumRepository.convertLocalAlbumsToFolders()
+            } catch (e: Exception) {
+                DebugLogger.w(TAG, "Server sync failed: ${e.message}")
+            }
+        }
+    }
+
     /** Choose an album's cover (file id), or null to use its first item. */
     fun setAlbumCover(albumId: String, fileId: String?) {
         updateLibrary { lib ->
@@ -643,8 +676,15 @@ class GalleryRepository private constructor() {
             items.forEach { MediaCache.evict(it.toCacheKey()) }
         }
 
-        // Remove history entries that have no images left (best effort; hidden either way)
         val client = comfyUIClient ?: return
+        // Delete the files on the PC too (ComfyMobile extension; otherwise they are only hidden
+        // and get deleted by the next sync once the extension is installed)
+        if (client.hasFileOps) {
+            val paths = items.filter { it.type == "output" }.map { pathOf(it) }
+            if (paths.isNotEmpty()) withContext(Dispatchers.IO) { client.deleteOutputFiles(paths) }
+        }
+
+        // Remove history entries that have no images left (best effort; hidden either way)
         items.map { it.promptId }.distinct()
             .filter { !isOutputFilePromptId(it) && it !in remainingPrompts }
             .forEach { promptId ->

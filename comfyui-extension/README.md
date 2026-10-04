@@ -30,6 +30,11 @@ It adds these routes (paths are always kept inside the output folder):
 | `GET /comfymobile/output/duplicates` | Groups of files with identical content (for "Clean up duplicates") |
 | `POST /comfymobile/output/delete` | Delete files (the root copies of duplicates) |
 
+With the extension the app also keeps the PC in line with the app: deleting an image for good
+(from the app's trash) deletes the file, and on each gallery refresh files deleted in the app
+are deleted on the PC, album folders made in the app are created, and older app-only albums
+become folders with their images moved into them.
+
 Without the extension the app still works, with limits: subfolders are only found through
 the history (or the assets API with `--enable-assets`), and "moving" copies the file into the
 album folder through ComfyUI's upload API while the original stays on the disk (hidden in the app).

@@ -673,7 +673,7 @@
     <string name="gallery_restore">Restaurer</string>
     <string name="gallery_delete_forever">Supprimer définitivement</string>
     <string name="gallery_empty_trash">Vider la corbeille</string>
-    <string name="gallery_delete_forever_confirm">Supprimer définitivement %d éléments ? Cette action est irréversible. Les fichiers restent dans le dossier output de ComfyUI.</string>
+    <string name="gallery_delete_forever_confirm">Supprimer définitivement %d éléments ? Cette action est irréversible. Avec l\'extension ComfyMobile sur le PC, les fichiers y sont aussi supprimés.</string>
     <string name="gallery_folder_album">Dossier output</string>
     <string name="msg_moved_to_album">Déplacé dans l\'album</string>
     <string name="msg_some_items_failed_to_move">Certains fichiers n\'ont pas pu être déplacés</string>
