@@ -7,8 +7,13 @@ the server.
 ComfyUI's own API can't list subfolders or move files, so install this small extension on
 the PC running ComfyUI:
 
-1. Copy the `comfymobile_files` folder into `ComfyUI/custom_nodes/`.
-2. Restart ComfyUI.
+1. Copy the `comfymobile_files` folder into `ComfyUI/custom_nodes/`
+   (copying this whole `comfyui-extension` folder there works too).
+2. Restart ComfyUI. The console shows
+   `[ComfyMobile] file operations enabled: /comfymobile/output/*`.
+3. Check: opening `http://<PC address>:8188/comfymobile/output/list` in a browser shows a
+   JSON list of files.
+4. In the app, pull down to refresh the gallery.
 
 It adds these routes (paths are always kept inside the output folder):
 

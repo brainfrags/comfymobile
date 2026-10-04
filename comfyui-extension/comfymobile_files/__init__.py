@@ -36,6 +36,21 @@ NODE_DISPLAY_NAME_MAPPINGS = {}
 
 routes = PromptServer.instance.routes
 
+# Register the routes only once, even if this folder is installed twice
+# (e.g. custom_nodes/comfymobile_files and custom_nodes/comfyui-extension/comfymobile_files)
+_ALREADY_LOADED = getattr(PromptServer.instance, "_comfymobile_files_loaded", False)
+PromptServer.instance._comfymobile_files_loaded = True
+if _ALREADY_LOADED:
+    class _Ignore:
+        def get(self, *_):
+            return lambda f: f
+
+        post = get
+
+    routes = _Ignore()
+else:
+    print("[ComfyMobile] file operations enabled: /comfymobile/output/*")
+
 
 def _base(dir_type="output"):
     if dir_type == "temp":
