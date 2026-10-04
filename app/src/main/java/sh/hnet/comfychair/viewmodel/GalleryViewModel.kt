@@ -89,7 +89,9 @@ data class GalleryUiState(
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val selectedItems: Set<String> = emptySet(), // Set of "${promptId}_${filename}" keys
-    val isSelectionMode: Boolean = false
+    val isSelectionMode: Boolean = false,
+    /** Files are being moved between album folders */
+    val isMoving: Boolean = false
 ) {
     val selectedAlbum: GalleryAlbum?
         get() = selectedAlbumId?.let { id -> (albums + folderAlbums).firstOrNull { it.id == id } }
@@ -133,7 +135,8 @@ class GalleryViewModel : ViewModel() {
         val tab: GalleryTab = GalleryTab.PHOTOS,
         val viewMode: GalleryViewMode = GalleryViewMode.GRID_2,
         val albums: List<GalleryAlbum> = emptyList(),
-        val selectedAlbumId: String? = null
+        val selectedAlbumId: String? = null,
+        val isMoving: Boolean = false
     )
     private val _viewState = MutableStateFlow(ViewState())
     private var appContext: Context? = null
@@ -154,16 +157,18 @@ class GalleryViewModel : ViewModel() {
                     repository.galleryItems,
                     repository.trashedItems,
                     repository.library,
-                    repository.isLoading,
-                    repository.isManualRefreshing
-                ) { items, trashed, library, isLoading, isManualRefreshing ->
-                    RepoState(items, trashed, library.order, isLoading, isManualRefreshing)
+                    repository.serverFolders
+                ) { items, trashed, library, serverFolders ->
+                    RepoState(items, trashed, library.order, library.folders + serverFolders)
+                },
+                combine(repository.isLoading, repository.isManualRefreshing) { loading, refreshing ->
+                    loading to refreshing
                 },
                 _selectedItems,
                 _isSelectionMode,
                 _viewState
-            ) { repo, selectedItems, isSelectionMode, view ->
-                buildUiState(repo, selectedItems, isSelectionMode, view)
+            ) { repo, (isLoading, isManualRefreshing), selectedItems, isSelectionMode, view ->
+                buildUiState(repo, isLoading, isManualRefreshing, selectedItems, isSelectionMode, view)
             }.collect { state ->
                 _uiState.value = state
             }
@@ -174,19 +179,21 @@ class GalleryViewModel : ViewModel() {
         val items: List<GalleryItem>,
         val trashed: List<GalleryItem>,
         val order: List<String>,
-        val isLoading: Boolean,
-        val isManualRefreshing: Boolean
+        /** Album folders known besides the ones that have items (created in the app / on the server) */
+        val folders: Set<String>
     )
 
     private fun buildUiState(
         repo: RepoState,
+        isLoading: Boolean,
+        isManualRefreshing: Boolean,
         selectedItems: Set<String>,
         isSelectionMode: Boolean,
         view: ViewState
     ): GalleryUiState {
         // Grid keys must be unique
         val items = applyOrder(repo.items.distinctBy { getItemKey(it) }, repo.order)
-        val folderAlbums = folderAlbumsOf(items)
+        val folderAlbums = folderAlbumsOf(items, repo.folders)
         val allAlbums = view.albums + folderAlbums
         val album = allAlbums.firstOrNull { it.id == view.selectedAlbumId }
         // Photos shows only items not yet sorted into any album
@@ -209,10 +216,11 @@ class GalleryViewModel : ViewModel() {
             selectedAlbumId = album?.id,
             albumCounts = albumItems.mapValues { it.value.size },
             albumCovers = albumItems.mapNotNull { (id, list) -> list.firstOrNull()?.let { id to it } }.toMap(),
-            isLoading = repo.isLoading,
-            isRefreshing = repo.isManualRefreshing, // Only show indicator for manual refresh
+            isLoading = isLoading,
+            isRefreshing = isManualRefreshing, // Only show indicator for manual refresh
             selectedItems = selectedItems,
-            isSelectionMode = isSelectionMode
+            isSelectionMode = isSelectionMode,
+            isMoving = view.isMoving
         )
     }
 
@@ -225,19 +233,41 @@ class GalleryViewModel : ViewModel() {
         return fresh + ordered.sortedBy { position[GalleryLibraryStore.fileId(it)] }
     }
 
-    /** One read-only album per output subfolder, with its items as members. */
-    private fun folderAlbumsOf(items: List<GalleryItem>): List<GalleryAlbum> =
-        items.filter { it.type == "output" && it.subfolder.isNotEmpty() }
-            .groupBy { it.subfolder }
-            .entries
-            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.key })
-            .map { (subfolder, list) ->
+    /** One album per output subfolder (also empty ones in [extraFolders]), with its items as members. */
+    private fun folderAlbumsOf(items: List<GalleryItem>, extraFolders: Set<String>): List<GalleryAlbum> {
+        val byFolder = items.filter { it.type == "output" && it.subfolder.isNotEmpty() }.groupBy { it.subfolder }
+        return (byFolder.keys + extraFolders.filter { it.isNotBlank() })
+            .sortedWith(String.CASE_INSENSITIVE_ORDER)
+            .map { subfolder ->
                 GalleryAlbum(
                     id = FOLDER_ALBUM_PREFIX + subfolder,
                     name = subfolder,
-                    members = list.mapTo(HashSet()) { getItemKey(it) }
+                    members = byFolder[subfolder].orEmpty().mapTo(HashSet()) { getItemKey(it) }
                 )
             }
+    }
+
+    private fun folderOf(albumId: String) = albumId.removePrefix(FOLDER_ALBUM_PREFIX)
+
+    /** A name usable as a folder name on Windows, macOS and Linux. */
+    private fun folderName(name: String): String =
+        name.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_").trim('.', ' ')
+
+    /**
+     * Move items into an album folder ("" = output root) in the background and report the result.
+     */
+    private fun moveItems(items: List<GalleryItem>, folder: String, successMessage: Int, after: suspend () -> Unit = {}) {
+        viewModelScope.launch {
+            _viewState.value = _viewState.value.copy(isMoving = true)
+            try {
+                val failed = repository.moveToFolder(items, folder)
+                after()
+                _events.emit(GalleryEvent.ShowToast(if (failed == 0) successMessage else R.string.msg_some_items_failed_to_move))
+            } finally {
+                _viewState.value = _viewState.value.copy(isMoving = false)
+            }
+        }
+    }
 
     fun initialize(context: Context) {
         // MediaCache is used for all fetch operations
@@ -292,50 +322,85 @@ class GalleryViewModel : ViewModel() {
         _viewState.value = _viewState.value.copy(tab = GalleryTab.ALBUMS, selectedAlbumId = albumId)
     }
 
-    /** Create an album; if items are selected, they are added to it. */
+    /**
+     * Create an album: a subfolder of the output folder. If items are selected, their
+     * files are moved into it.
+     */
     fun createAlbum(name: String) {
-        val trimmed = name.trim()
-        if (trimmed.isEmpty()) return
-        val album = GalleryAlbum(
-            id = java.util.UUID.randomUUID().toString(),
-            name = trimmed,
-            members = _selectedItems.value
-        )
-        updateAlbums { it + album }
-        if (album.members.isNotEmpty()) {
-            clearSelection()
-            viewModelScope.launch { _events.emit(GalleryEvent.ShowToast(R.string.msg_added_to_album)) }
-        }
+        val folder = folderName(name)
+        if (folder.isEmpty()) return
+        val selected = getSelectedItems()
+        clearSelection()
+        viewModelScope.launch { repository.createFolder(folder) }
+        if (selected.isNotEmpty()) moveItems(selected, folder, R.string.msg_moved_to_album)
     }
 
+    /** Rename an album; for a folder album its files are moved to the renamed folder. */
     fun renameAlbum(albumId: String, name: String) {
-        if (isFolderAlbum(albumId)) return
+        if (isFolderAlbum(albumId)) {
+            val newFolder = folderName(name)
+            val oldFolder = folderOf(albumId)
+            if (newFolder.isEmpty() || newFolder == oldFolder) return
+            val members = albumItems(albumId)
+            viewModelScope.launch { repository.createFolder(newFolder) }
+            if (_viewState.value.selectedAlbumId == albumId) {
+                _viewState.value = _viewState.value.copy(selectedAlbumId = FOLDER_ALBUM_PREFIX + newFolder)
+            }
+            moveItems(members, newFolder, R.string.msg_album_renamed) { repository.removeFolder(oldFolder) }
+            return
+        }
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
         updateAlbums { list -> list.map { if (it.id == albumId) it.copy(name = trimmed) else it } }
     }
 
-    /** Deletes only the album; the items stay in the gallery. */
+    /** Deletes only the album; the items stay in the gallery (a folder album's files go back to the output root). */
     fun deleteAlbum(albumId: String) {
-        if (isFolderAlbum(albumId)) return
+        if (isFolderAlbum(albumId)) {
+            val folder = folderOf(albumId)
+            if (_viewState.value.selectedAlbumId == albumId) {
+                _viewState.value = _viewState.value.copy(selectedAlbumId = null)
+            }
+            moveItems(albumItems(albumId), "", R.string.msg_album_deleted) { repository.removeFolder(folder) }
+            return
+        }
         updateAlbums { list -> list.filterNot { it.id == albumId } }
     }
 
+    /** Add the selection to an album; for a folder album the files are moved into its folder. */
     fun addSelectedToAlbum(albumId: String) {
-        if (isFolderAlbum(albumId)) return
         val keys = _selectedItems.value
         if (keys.isEmpty()) return
+        if (isFolderAlbum(albumId)) {
+            val selected = getSelectedItems()
+            clearSelection()
+            moveItems(selected, folderOf(albumId), R.string.msg_moved_to_album)
+            return
+        }
         updateAlbums { list -> list.map { if (it.id == albumId) it.copy(members = it.members + keys) else it } }
         clearSelection()
         viewModelScope.launch { _events.emit(GalleryEvent.ShowToast(R.string.msg_added_to_album)) }
     }
 
+    /** Remove the selection from an album; for a folder album the files go back to the output root. */
     fun removeSelectedFromAlbum(albumId: String) {
         val keys = _selectedItems.value
         if (keys.isEmpty()) return
+        if (isFolderAlbum(albumId)) {
+            val selected = getSelectedItems()
+            clearSelection()
+            moveItems(selected, "", R.string.msg_removed_from_album)
+            return
+        }
         updateAlbums { list -> list.map { if (it.id == albumId) it.copy(members = it.members - keys) else it } }
         clearSelection()
         viewModelScope.launch { _events.emit(GalleryEvent.ShowToast(R.string.msg_removed_from_album)) }
+    }
+
+    private fun albumItems(albumId: String): List<GalleryItem> {
+        val album = _uiState.value.let { st -> (st.albums + st.folderAlbums).firstOrNull { it.id == albumId } }
+            ?: return emptyList()
+        return repository.galleryItems.value.filter { getItemKey(it) in album.members }
     }
 
     /**

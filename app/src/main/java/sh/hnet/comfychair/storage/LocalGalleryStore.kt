@@ -28,7 +28,7 @@ object LocalGalleryStore {
     private const val INDEX_FILE = "index.json"
 
     private class Entry(
-        val item: GalleryItem,
+        var item: GalleryItem,
         val seq: Long,
         var downloaded: Boolean,
         var savedToPhone: Boolean
@@ -115,7 +115,13 @@ object LocalGalleryStore {
             // Oldest first so newer items get higher sequence numbers
             for (item in serverItems.asReversed()) {
                 val k = item.toCacheKey().keyString
-                if (k !in idx) idx[k] = Entry(item, nextSeq++, downloaded = false, savedToPhone = false)
+                val existing = idx[k]
+                if (existing == null) {
+                    idx[k] = Entry(item, nextSeq++, downloaded = false, savedToPhone = false)
+                } else if (existing.item.subfolder != item.subfolder || existing.item.type != item.type) {
+                    // File was moved to another folder on the server; keep the same entry
+                    existing.item = item.copy(index = existing.item.index)
+                }
             }
             persist(context, serverId)
             val onServer = serverItems.map { it.toCacheKey().keyString }.toHashSet()

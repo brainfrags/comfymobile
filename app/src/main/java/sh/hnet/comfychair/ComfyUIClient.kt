@@ -1463,31 +1463,80 @@ class ComfyUIClient(
      * @param callback Called with the result: success true/false
      */
     /**
+     * Files and folders of the server's output folder.
+     * @property files Paths relative to the output folder ("a.png", "sub/b.png"), newest first
+     * @property folders Subfolders (including empty ones) when the server reports them
+     * @property fileOps True when the ComfyMobile extension is installed on the server, so
+     *           files can be moved and folders created/removed
+     */
+    data class OutputListing(val files: List<String>, val folders: List<String>, val fileOps: Boolean)
+
+    /** True once the ComfyMobile extension was found on this server (see [listOutputFiles]). */
+    @Volatile
+    var hasFileOps: Boolean = false
+        private set
+
+    private fun getJsonBlocking(url: String): String? = try {
+        httpClient.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+            if (response.isSuccessful) response.body?.string() else null
+        }
+    } catch (e: IOException) {
+        null
+    }
+
+    private fun postJsonBlocking(path: String, body: JSONObject): JSONObject? {
+        val baseUrl = getBaseUrl() ?: return null
+        return try {
+            val request = Request.Builder()
+                .url("$baseUrl$path")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+            httpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) JSONObject(response.body?.string() ?: "{}") else null
+            }
+        } catch (e: Exception) {
+            DebugLogger.w(TAG, "POST $path failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
      * List the media files in the server's output folder, including ones that are not in
      * the history (e.g. after a ComfyUI restart or copied there by hand). Blocking; call
      * from a background thread.
      *
-     * - Root files come from /internal/files/output (newest first).
-     * - Files in subfolders come from the assets API (/api/assets), which ComfyUI only
-     *   serves when started with --enable-assets; without it only the root is listed.
+     * - With the ComfyMobile extension: the whole output tree, plus empty folders.
+     * - Otherwise root files come from /internal/files/output (newest first) and files in
+     *   subfolders from the assets API (/api/assets), which ComfyUI only serves when
+     *   started with --enable-assets.
      *
-     * @return Paths relative to the output folder ("a.png", "sub/b.png"), or null if the
-     *         server could not be reached
+     * @return The listing, or null if the server could not be reached
      */
-    fun listOutputFiles(): List<String>? {
+    fun listOutputFiles(): OutputListing? {
         val baseUrl = getBaseUrl() ?: return null
+
+        // ComfyMobile extension
+        getJsonBlocking("$baseUrl/comfymobile/output/list")?.let { body ->
+            try {
+                val json = JSONObject(body)
+                val files = json.optJSONArray("files") ?: org.json.JSONArray()
+                val folders = json.optJSONArray("folders") ?: org.json.JSONArray()
+                hasFileOps = true
+                return OutputListing(
+                    files = (0 until files.length()).map { files.getString(it) }.filter { isMediaFile(it) },
+                    folders = (0 until folders.length()).map { folders.getString(it) },
+                    fileOps = true
+                )
+            } catch (e: Exception) {
+                DebugLogger.w(TAG, "Could not parse extension listing: ${e.message}")
+            }
+        }
+        hasFileOps = false
+
         val result = LinkedHashSet<String>()
 
-        fun getJson(url: String): String? = try {
-            httpClient.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
-                if (response.isSuccessful) response.body?.string() else null
-            }
-        } catch (e: IOException) {
-            null
-        }
-
         // Root of the output folder ("name [output]" in newer versions, plain names before)
-        val root = getJson("$baseUrl/internal/files/output") ?: return null
+        val root = getJsonBlocking("$baseUrl/internal/files/output") ?: return null
         try {
             val arr = org.json.JSONArray(root)
             for (i in 0 until arr.length()) {
@@ -1501,7 +1550,7 @@ class ComfyUIClient(
         // Whole output tree via the assets API, when enabled
         var offset = 0
         while (offset < 20000) {
-            val body = getJson("$baseUrl/api/assets?include_tags=output&limit=500&offset=$offset") ?: break
+            val body = getJsonBlocking("$baseUrl/api/assets?include_tags=output&limit=500&offset=$offset") ?: break
             val page = try { JSONObject(body) } catch (e: Exception) { break }
             val assets = page.optJSONArray("assets") ?: break
             for (i in 0 until assets.length()) {
@@ -1513,7 +1562,67 @@ class ComfyUIClient(
             offset += assets.length()
         }
 
-        return result.toList()
+        return OutputListing(result.toList(), emptyList(), fileOps = false)
+    }
+
+    /** Create a subfolder of the output folder (needs the ComfyMobile extension). Blocking. */
+    fun createOutputFolder(path: String): Boolean =
+        postJsonBlocking("/comfymobile/output/mkdir", JSONObject().put("path", path)) != null
+
+    /** Remove an output subfolder if it is empty (needs the ComfyMobile extension). Blocking. */
+    fun removeOutputFolder(path: String): Boolean =
+        postJsonBlocking("/comfymobile/output/rmdir", JSONObject().put("path", path))?.optBoolean("removed") == true
+
+    /**
+     * Move files into an output subfolder ("" = output root). Needs the ComfyMobile extension.
+     * Blocking.
+     *
+     * @param files (type, path relative to that type's folder) of each file
+     * @return Map from "type/path" to the new path relative to the output folder (files that
+     *         could not be moved are missing), or null if the request failed
+     */
+    fun moveOutputFiles(files: List<Pair<String, String>>, toFolder: String): Map<String, String>? {
+        val items = org.json.JSONArray()
+        files.forEach { (type, path) -> items.put(JSONObject().put("type", type).put("path", path)) }
+        val response = postJsonBlocking(
+            "/comfymobile/output/move",
+            JSONObject().put("items", items).put("to", toFolder)
+        ) ?: return null
+        val moved = response.optJSONArray("moved") ?: return emptyMap()
+        return (0 until moved.length()).mapNotNull { i ->
+            val m = moved.optJSONObject(i) ?: return@mapNotNull null
+            "${m.optString("type", "output")}/${m.optString("from")}" to m.optString("path")
+        }.toMap()
+    }
+
+    /**
+     * Save a file into the output folder through ComfyUI's upload API (type=output), which
+     * creates the subfolder if needed and renames on a name clash. Blocking.
+     *
+     * @return The saved path relative to the output folder, or null on failure
+     */
+    fun uploadToOutput(bytes: ByteArray, filename: String, subfolder: String): String? {
+        val baseUrl = getBaseUrl() ?: return null
+        return try {
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("image", filename, bytes.toRequestBody("application/octet-stream".toMediaType()))
+                .addFormDataPart("type", "output")
+                .addFormDataPart("subfolder", subfolder)
+                .addFormDataPart("overwrite", "false")
+                .build()
+            val request = Request.Builder().url("$baseUrl/upload/image").post(body).build()
+            transferClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val json = JSONObject(response.body?.string() ?: "{}")
+                val name = json.optString("name", filename)
+                val folder = json.optString("subfolder", subfolder).replace('\\', '/').trim('/')
+                if (folder.isEmpty()) name else "$folder/$name"
+            }
+        } catch (e: Exception) {
+            DebugLogger.w(TAG, "Upload to output failed: ${e.message}")
+            null
+        }
     }
 
     private fun isMediaFile(name: String): Boolean {

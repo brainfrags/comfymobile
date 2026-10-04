@@ -57,6 +57,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
@@ -447,7 +448,7 @@ fun GalleryScreen(
                     IconButton(onClick = { showAddToAlbumDialog = true }) {
                         Icon(Icons.Default.LibraryAdd, contentDescription = stringResource(R.string.gallery_add_to_album))
                     }
-                    if (selectedAlbum != null && !GalleryViewModel.isFolderAlbum(selectedAlbum.id)) {
+                    if (selectedAlbum != null) {
                         IconButton(onClick = { galleryViewModel.removeSelectedFromAlbum(selectedAlbum.id) }) {
                             Icon(Icons.Default.RemoveCircleOutline, contentDescription = stringResource(R.string.gallery_remove_from_album))
                         }
@@ -480,7 +481,7 @@ fun GalleryScreen(
                             }
                         }
                         else -> {
-                            if (selectedAlbum != null && !GalleryViewModel.isFolderAlbum(selectedAlbum.id)) {
+                            if (selectedAlbum != null) {
                                 IconButton(onClick = { editingAlbum = selectedAlbum }) {
                                     Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.gallery_edit_album))
                                 }
@@ -503,6 +504,11 @@ fun GalleryScreen(
                 }
             }
         )
+
+        // Files are being moved between album folders
+        if (uiState.isMoving) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
 
         // View mode switcher (not for the album list)
         if (!showAlbumList) {
@@ -677,7 +683,7 @@ fun GalleryScreen(
 
     if (showAddToAlbumDialog) {
         AddToAlbumDialog(
-            albums = uiState.albums,
+            albums = (uiState.albums + uiState.folderAlbums).filter { it.id != uiState.selectedAlbumId },
             albumCounts = uiState.albumCounts,
             onSelectAlbum = { albumId ->
                 galleryViewModel.addSelectedToAlbum(albumId)

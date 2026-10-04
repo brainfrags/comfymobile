@@ -673,4 +673,8 @@
     <string name="gallery_empty_trash">Papierkorb leeren</string>
     <string name="gallery_delete_forever_confirm">%d Elemente endgültig löschen? Dies kann nicht rückgängig gemacht werden. Die Dateien bleiben im Output-Ordner von ComfyUI.</string>
     <string name="gallery_folder_album">Output-Ordner</string>
+    <string name="msg_moved_to_album">In das Album verschoben</string>
+    <string name="msg_some_items_failed_to_move">Einige Dateien konnten nicht verschoben werden</string>
+    <string name="msg_album_renamed">Album umbenannt</string>
+    <string name="msg_album_deleted">Album gelöscht</string>
 </resources>

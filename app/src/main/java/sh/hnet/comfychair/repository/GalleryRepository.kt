@@ -49,8 +49,20 @@ class GalleryRepository private constructor() {
         }
     }
 
-    // Every known item (history, kept on device, output folder), minus purged ones
+    // Every known item (history, kept on device, output folder) as loaded, before moves,
+    // purges and the trash are applied
+    private var rawItems: List<GalleryItem> = emptyList()
+
+    // Every item at its current location, minus purged ones (derived from rawItems)
     private var allItems: List<GalleryItem> = emptyList()
+
+    // Subfolders of the output folder reported by the server (ComfyMobile extension only)
+    private val _serverFolders = MutableStateFlow<List<String>>(emptyList())
+    val serverFolders: StateFlow<List<String>> = _serverFolders.asStateFlow()
+
+    /** Whether the server can move files (ComfyMobile extension installed). */
+    val canMoveFiles: Boolean
+        get() = comfyUIClient?.hasFileOps == true
 
     // Trash / purged / custom order for the current server
     private val _library = MutableStateFlow(GalleryLibrary())
@@ -258,11 +270,13 @@ class GalleryRepository private constructor() {
             }
 
             if (context != null && serverId != null) ensureLibrary(context, serverId)
-            val purged = _library.value.purged
+            val library = _library.value
 
-            // Items deleted for good are not registered again (and not downloaded again)
+            // Point history items at files moved by the app; items deleted for good are not
+            // registered again (and not downloaded again)
             var items = parseHistoryToGalleryItems(historyJson)
-                .filter { GalleryLibraryStore.fileId(it) !in purged }
+                .map { applyMove(it, library.moves) }
+                .filter { GalleryLibraryStore.fileId(it) !in library.purged }
 
             // Merge with items kept on the device (survive server-side deletion)
             if (context != null && serverId != null) {
@@ -273,12 +287,13 @@ class GalleryRepository private constructor() {
             }
 
             // Everything else in the output folder (no generation info; that's fine)
-            val outputFiles = withContext(Dispatchers.IO) { client.listOutputFiles() }
-            if (outputFiles != null) {
-                val known = items.mapTo(HashSet()) { GalleryLibraryStore.fileId(it) }
-                items = items + outputFiles.mapNotNull { path ->
+            val listing = withContext(Dispatchers.IO) { client.listOutputFiles() }
+            if (listing != null) {
+                val known = items.mapTo(HashSet()) { GalleryLibraryStore.fileId(applyMove(it, library.moves)) }
+                items = items + listing.files.mapNotNull { path ->
                     outputFileItem(path).takeIf { GalleryLibraryStore.fileId(it) !in known }
                 }
+                _serverFolders.value = listing.folders
             }
 
             val previousCount = _galleryItems.value.size
@@ -362,19 +377,25 @@ class GalleryRepository private constructor() {
 
     private fun setAllItems(items: List<GalleryItem>) {
         synchronized(stateLock) {
-            val purged = _library.value.purged
-            allItems = items.filter { GalleryLibraryStore.fileId(it) !in purged }
+            rawItems = items
             publish()
         }
     }
 
-    /** Split all items into gallery and trash. Call with [stateLock] held. */
+    /**
+     * Apply moves, purges and the trash to the loaded items, and split them into gallery
+     * and trash. Call with [stateLock] held.
+     */
     private fun publish() {
-        val trash = _library.value.trash
-        val purged = _library.value.purged
-        val (trashed, visible) = allItems
-            .filter { GalleryLibraryStore.fileId(it) !in purged }
-            .partition { GalleryLibraryStore.fileId(it) in trash }
+        val library = _library.value
+        val trash = library.trash
+        // Moved items first come from the history (with generation info); the output folder
+        // listing of the same file is dropped as a duplicate
+        allItems = rawItems
+            .map { applyMove(it, library.moves) }
+            .distinctBy { GalleryLibraryStore.fileId(it) }
+            .filter { GalleryLibraryStore.fileId(it) !in library.purged }
+        val (trashed, visible) = allItems.partition { GalleryLibraryStore.fileId(it) in trash }
         _galleryItems.value = visible
         _trashedItems.value = trashed.sortedByDescending { trash[GalleryLibraryStore.fileId(it)] ?: 0L }
     }
@@ -425,6 +446,94 @@ class GalleryRepository private constructor() {
         updateLibrary { lib -> lib.copy(order = order) }
     }
 
+    /** The item at the location the app moved its file to, if it was moved. */
+    private fun applyMove(item: GalleryItem, moves: Map<String, String>): GalleryItem {
+        val path = moves[GalleryLibraryStore.fileId(item)] ?: return item
+        return item.copy(
+            type = "output",
+            subfolder = path.substringBeforeLast('/', ""),
+            filename = path.substringAfterLast('/')
+        )
+    }
+
+    // Album folders
+
+    /** Create an album folder in the output folder (shown even while empty). */
+    suspend fun createFolder(folder: String) {
+        updateLibrary { lib -> lib.copy(folders = lib.folders + folder) }
+        val client = comfyUIClient ?: return
+        if (client.hasFileOps) withContext(Dispatchers.IO) { client.createOutputFolder(folder) }
+    }
+
+    /**
+     * Forget an album folder; it is removed from the server too once it is empty
+     * (ComfyMobile extension only).
+     */
+    suspend fun removeFolder(folder: String) {
+        updateLibrary { lib -> lib.copy(folders = lib.folders - folder) }
+        _serverFolders.value = _serverFolders.value - folder
+        val client = comfyUIClient ?: return
+        if (client.hasFileOps) withContext(Dispatchers.IO) { client.removeOutputFolder(folder) }
+    }
+
+    /**
+     * Move items into an output subfolder ("" = the output root).
+     *
+     * With the ComfyMobile extension the files are really moved on the server. Without it,
+     * ComfyUI can only add files, so each file is copied there with the upload API and the
+     * original is hidden in the app (it stays on the server's disk).
+     *
+     * @return Number of items that could not be moved
+     */
+    suspend fun moveToFolder(items: Collection<GalleryItem>, folder: String): Int {
+        val client = comfyUIClient ?: return items.size
+        val toMove = items.filter { it.type != "output" || it.subfolder != folder }
+        if (toMove.isEmpty()) return 0
+
+        // fileId of each item -> its new path relative to the output folder
+        val newPaths: Map<String, String> = withContext(Dispatchers.IO) {
+            if (client.hasFileOps) {
+                val byKey = toMove.associateBy { "${it.type}/${pathOf(it)}" }
+                val moved = client.moveOutputFiles(byKey.keys.map { k -> byKey.getValue(k).let { it.type to pathOf(it) } }, folder)
+                    ?: emptyMap()
+                moved.mapNotNull { (key, newPath) -> byKey[key]?.let { GalleryLibraryStore.fileId(it) to newPath } }.toMap()
+            } else {
+                toMove.mapNotNull { item ->
+                    val bytes = kotlin.coroutines.suspendCoroutine<ByteArray?> { cont ->
+                        client.fetchRawBytes(item.filename, item.subfolder, item.type) { b, _ -> cont.resumeWith(Result.success(b)) }
+                    } ?: return@mapNotNull null
+                    client.uploadToOutput(bytes, item.filename, folder)?.let { GalleryLibraryStore.fileId(item) to it }
+                }.toMap()
+            }
+        }
+
+        val copied = !client.hasFileOps
+        updateLibrary { lib ->
+            val moves = lib.moves.toMutableMap()
+            val order = lib.order.toMutableList()
+            val purged = lib.purged.toMutableSet()
+            for ((currentId, newPath) in newPaths) {
+                val newId = GalleryLibraryStore.outputFileId(newPath)
+                // Keep the move keyed by the file's original id (what the history reports)
+                val originalId = moves.entries.firstOrNull { GalleryLibraryStore.outputFileId(it.value) == currentId }?.key
+                    ?: currentId
+                moves[originalId] = newPath
+                // A copied original is still listed in the output folder; hide it
+                if (copied) purged.add(currentId)
+                purged.remove(newId)
+                val i = order.indexOf(currentId)
+                if (i >= 0) order[i] = newId
+            }
+            lib.copy(moves = moves, order = order, purged = purged)
+        }
+        // Thumbnails and copies are keyed by name; refresh so the new location is listed
+        refresh()
+        return toMove.size - newPaths.size
+    }
+
+    private fun pathOf(item: GalleryItem) =
+        if (item.subfolder.isEmpty()) item.filename else "${item.subfolder}/${item.filename}"
+
     /**
      * Delete items for good: they are hidden permanently, removed from the device copy,
      * and a history entry is removed from the server once none of its images are left.
@@ -436,11 +545,7 @@ class GalleryRepository private constructor() {
         updateLibrary { lib ->
             lib.copy(trash = lib.trash - ids, purged = lib.purged + ids, order = lib.order - ids)
         }
-        val remainingPrompts = synchronized(stateLock) {
-            allItems = allItems.filter { GalleryLibraryStore.fileId(it) !in ids }
-            publish()
-            allItems.mapTo(HashSet()) { it.promptId }
-        }
+        val remainingPrompts = synchronized(stateLock) { allItems.mapTo(HashSet()) { it.promptId } }
 
         val context = applicationContext
         val serverId = ConnectionManager.currentServerId
@@ -473,7 +578,9 @@ class GalleryRepository private constructor() {
      */
     fun clearCache() {
         DebugLogger.i(TAG, "Clearing cache")
+        _serverFolders.value = emptyList()
         synchronized(stateLock) {
+            rawItems = emptyList()
             allItems = emptyList()
             libraryServerId = null
             _library.value = GalleryLibrary()

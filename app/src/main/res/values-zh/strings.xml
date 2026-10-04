@@ -675,4 +675,8 @@
     <string name="gallery_empty_trash">清空回收站</string>
     <string name="gallery_delete_forever_confirm">永久删除 %d 个项目？此操作无法撤销。文件仍保留在 ComfyUI 的 output 文件夹中。</string>
     <string name="gallery_folder_album">Output 文件夹</string>
+    <string name="msg_moved_to_album">已移至相册</string>
+    <string name="msg_some_items_failed_to_move">部分文件无法移动</string>
+    <string name="msg_album_renamed">相册已重命名</string>
+    <string name="msg_album_deleted">相册已删除</string>
 </resources>
