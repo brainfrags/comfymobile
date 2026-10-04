@@ -49,6 +49,22 @@ object BitmapCache {
 }
 
 /**
+ * Hands the gallery item list to the viewer in memory. A big gallery (thousands of items with
+ * the output folder) does not fit in an Intent: Android limits a transaction to about 1 MB and
+ * kills the app when it is exceeded.
+ */
+object ViewerItemsHolder {
+    @Volatile
+    private var items: List<MediaViewerItem> = emptyList()
+
+    fun put(list: List<MediaViewerItem>) {
+        items = list
+    }
+
+    fun get(): List<MediaViewerItem> = items
+}
+
+/**
  * Activity for fullscreen media viewing.
  * Supports two modes:
  * - Gallery mode: Swipe navigation between items from ComfyUI history
@@ -101,7 +117,8 @@ class MediaViewerActivity : ComponentActivity() {
                 putExtra(EXTRA_MODE, MODE_GALLERY)
                 putExtra(EXTRA_HOSTNAME, hostname)
                 putExtra(EXTRA_PORT, port)
-                putExtra(EXTRA_GALLERY_ITEMS_JSON, MediaViewerItem.listToJson(items))
+                // In memory, not as an extra (see ViewerItemsHolder)
+                ViewerItemsHolder.put(items)
                 putExtra(EXTRA_INITIAL_INDEX, initialIndex)
                 putExtra(EXTRA_START_SLIDESHOW, startSlideshow)
                 putExtra(EXTRA_IS_TRASH, isTrash)
@@ -280,12 +297,17 @@ class MediaViewerActivity : ComponentActivity() {
     private fun initializeGalleryMode() {
         val hostname = intent.getStringExtra(EXTRA_HOSTNAME) ?: ""
         val port = intent.getIntExtra(EXTRA_PORT, 8188)
-        val itemsJson = intent.getStringExtra(EXTRA_GALLERY_ITEMS_JSON) ?: "[]"
+        val itemsJson = intent.getStringExtra(EXTRA_GALLERY_ITEMS_JSON)
         val initialIndex = intent.getIntExtra(EXTRA_INITIAL_INDEX, 0)
         val startSlideshow = intent.getBooleanExtra(EXTRA_START_SLIDESHOW, false)
         val isTrash = intent.getBooleanExtra(EXTRA_IS_TRASH, false)
 
-        val items = MediaViewerItem.listFromJson(itemsJson)
+        val items = itemsJson?.let { MediaViewerItem.listFromJson(it) } ?: ViewerItemsHolder.get()
+        if (items.isEmpty()) {
+            // The app was restarted while the viewer was open: the list is gone
+            finish()
+            return
+        }
 
         viewModel.initialize(
             context = this,
