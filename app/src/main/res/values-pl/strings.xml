@@ -695,4 +695,6 @@
     <string name="gallery_album_item_count">Elementy: %1$d</string>
     <string name="label_no_album">Bez albumu</string>
     <string name="gallery_sort_custom">Własna (przytrzymaj i przeciągnij)</string>
+    <string name="gallery_set_cover">Ustaw jako okładkę albumu</string>
+    <string name="msg_album_cover_set">Ustawiono okładkę albumu</string>
 </resources>

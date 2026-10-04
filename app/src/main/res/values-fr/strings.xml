@@ -695,4 +695,6 @@
     <string name="gallery_album_item_count">%1$d éléments</string>
     <string name="label_no_album">Aucun album</string>
     <string name="gallery_sort_custom">Personnalisé (maintenir et glisser)</string>
+    <string name="gallery_set_cover">Définir comme couverture de l\'album</string>
+    <string name="msg_album_cover_set">Couverture de l\'album définie</string>
 </resources>

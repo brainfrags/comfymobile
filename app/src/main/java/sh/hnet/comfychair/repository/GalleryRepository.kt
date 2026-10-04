@@ -513,6 +513,7 @@ class GalleryRepository private constructor() {
             val moves = lib.moves.toMutableMap()
             val order = lib.order.toMutableList()
             val purged = lib.purged.toMutableSet()
+            val covers = lib.covers.toMutableMap()
             for ((currentId, newPath) in newPaths) {
                 val newId = GalleryLibraryStore.outputFileId(newPath)
                 // Keep the move keyed by the file's original id (what the history reports)
@@ -524,8 +525,10 @@ class GalleryRepository private constructor() {
                 purged.remove(newId)
                 val i = order.indexOf(currentId)
                 if (i >= 0) order[i] = newId
+                // A cover follows its file
+                covers.entries.filter { it.value == currentId }.forEach { it.setValue(newId) }
             }
-            lib.copy(moves = moves, order = order, purged = purged)
+            lib.copy(moves = moves, order = order, purged = purged, covers = covers)
         }
         // Thumbnails and copies are keyed by name; refresh so the new location is listed
         refresh()
@@ -535,6 +538,13 @@ class GalleryRepository private constructor() {
     /** Move what [promptId] generates into [folder] once it shows up in the gallery. */
     fun queuePromptMove(promptId: String, folder: String) {
         updateLibrary { lib -> lib.copy(pendingMoves = lib.pendingMoves + (promptId to folder)) }
+    }
+
+    /** Choose an album's cover (file id), or null to use its first item. */
+    fun setAlbumCover(albumId: String, fileId: String?) {
+        updateLibrary { lib ->
+            lib.copy(covers = if (fileId == null) lib.covers - albumId else lib.covers + (albumId to fileId))
+        }
     }
 
     /** Forget queued moves of these prompts (they were put into another album by hand). */

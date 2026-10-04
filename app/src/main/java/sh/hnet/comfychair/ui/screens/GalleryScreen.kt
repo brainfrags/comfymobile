@@ -130,6 +130,7 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import sh.hnet.comfychair.ui.components.gallerySelectGestures
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.RestoreFromTrash
@@ -467,6 +468,11 @@ fun GalleryScreen(
                     }
                     IconButton(onClick = { showAddToAlbumDialog = true }) {
                         Icon(Icons.Default.LibraryAdd, contentDescription = stringResource(R.string.gallery_add_to_album))
+                    }
+                    if (inAlbum && uiState.selectedItems.size == 1) {
+                        IconButton(onClick = { galleryViewModel.setSelectedAsCover(selectedAlbum!!.id) }) {
+                            Icon(Icons.Default.Wallpaper, contentDescription = stringResource(R.string.gallery_set_cover))
+                        }
                     }
                     if (inAlbum) {
                         IconButton(onClick = { galleryViewModel.removeSelectedFromAlbum(selectedAlbum!!.id) }) {

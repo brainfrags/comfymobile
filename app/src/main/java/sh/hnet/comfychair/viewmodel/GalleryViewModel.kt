@@ -185,8 +185,10 @@ class GalleryViewModel : ViewModel() {
                 combine(_selectedItems, _isSelectionMode) { selected, mode -> selected to mode },
                 _viewState,
                 combine(AlbumRepository.albums, AlbumRepository.currentAlbumId) { a, id -> a to id },
-                combine(repository.trashedItems, repository.library) { trashed, library -> trashed to library.order }
-            ) { (rawItems, isLoading, isManualRefreshing), (selectedItems, isSelectionMode), view, (albums, currentAlbumId), (trashed, customOrder) ->
+                combine(repository.trashedItems, repository.library) { trashed, library ->
+                    Triple(trashed, library.order, library.covers)
+                }
+            ) { (rawItems, isLoading, isManualRefreshing), (selectedItems, isSelectionMode), view, (albums, currentAlbumId), (trashed, customOrder, covers) ->
                 // Grid keys must be unique
                 val items = view.sortOrder.apply(rawItems.distinctBy { getItemKey(it) }, customOrder)
                 val album = albums.firstOrNull { it.id == currentAlbumId }
@@ -208,7 +210,11 @@ class GalleryViewModel : ViewModel() {
                     albums = albums,
                     selectedAlbumId = album?.id,
                     albumCounts = albumItems.mapValues { it.value.size },
-                    albumCovers = albumItems.mapNotNull { (id, list) -> list.firstOrNull()?.let { id to it } }.toMap(),
+                    // The chosen cover if it is still in the album, else the first item
+                    albumCovers = albumItems.mapNotNull { (id, list) ->
+                        val chosen = covers[id]?.let { fileId -> list.firstOrNull { GalleryLibraryStore.fileId(it) == fileId } }
+                        (chosen ?: list.firstOrNull())?.let { id to it }
+                    }.toMap(),
                     isLoading = isLoading,
                     isRefreshing = isManualRefreshing, // Only show indicator for manual refresh
                     selectedItems = selectedItems,
@@ -337,6 +343,11 @@ class GalleryViewModel : ViewModel() {
             if (newFolder.isEmpty() || newFolder == oldFolder) return
             val members = albumItems(albumId)
             val wasOpen = AlbumRepository.currentAlbumId.value == albumId
+            // Keep the chosen cover (moveToFolder updates its file id)
+            repository.library.value.covers[albumId]?.let {
+                repository.setAlbumCover(AlbumRepository.folderAlbumId(newFolder), it)
+                repository.setAlbumCover(albumId, null)
+            }
             viewModelScope.launch { repository.createFolder(newFolder) }
             if (wasOpen) AlbumRepository.select(AlbumRepository.folderAlbumId(newFolder))
             moveItems(members, newFolder, R.string.msg_album_renamed) { repository.removeFolder(oldFolder) }
@@ -379,6 +390,14 @@ class GalleryViewModel : ViewModel() {
         updateAlbums { list -> list.map { if (it.id == albumId) it.copy(members = it.members + keys) else it } }
         clearSelection()
         viewModelScope.launch { _events.emit(GalleryEvent.ShowToast(R.string.msg_added_to_album)) }
+    }
+
+    /** Use the (one) selected item as the cover of [albumId]. */
+    fun setSelectedAsCover(albumId: String) {
+        val item = getSelectedItems().singleOrNull() ?: return
+        repository.setAlbumCover(albumId, GalleryLibraryStore.fileId(item))
+        clearSelection()
+        viewModelScope.launch { _events.emit(GalleryEvent.ShowToast(R.string.msg_album_cover_set)) }
     }
 
     /** Remove the selection from an album; for a folder album the files go back to the output folder itself. */

@@ -695,4 +695,6 @@
     <string name="gallery_album_item_count">%1$d elementos</string>
     <string name="label_no_album">Sin álbum</string>
     <string name="gallery_sort_custom">Personalizado (mantén y arrastra)</string>
+    <string name="gallery_set_cover">Usar como portada del álbum</string>
+    <string name="msg_album_cover_set">Portada del álbum establecida</string>
 </resources>

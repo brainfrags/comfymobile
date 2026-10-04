@@ -693,4 +693,6 @@
     <string name="gallery_album_item_count">%1$d Elemente</string>
     <string name="label_no_album">Kein Album</string>
     <string name="gallery_sort_custom">Benutzerdefiniert (halten und ziehen)</string>
+    <string name="gallery_set_cover">Als Albumcover festlegen</string>
+    <string name="msg_album_cover_set">Albumcover festgelegt</string>
 </resources>

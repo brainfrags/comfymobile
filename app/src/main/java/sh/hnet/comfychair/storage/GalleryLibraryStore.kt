@@ -15,6 +15,7 @@ import java.io.File
  * - moves: files the app moved into another output folder (original file id -> new path
  *   relative to the output folder), so history items still find their file
  * - folders: album folders created in the app (shown even while empty)
+ * - covers: album cover chosen by the user (album id -> file id)
  * - pendingMoves: prompts generated while a folder album was selected (prompt id -> folder);
  *   their files are moved into the folder once they appear
  *
@@ -29,7 +30,8 @@ data class GalleryLibrary(
     val order: List<String> = emptyList(),
     val moves: Map<String, String> = emptyMap(),
     val folders: Set<String> = emptySet(),
-    val pendingMoves: Map<String, String> = emptyMap()
+    val pendingMoves: Map<String, String> = emptyMap(),
+    val covers: Map<String, String> = emptyMap()
 )
 
 object GalleryLibraryStore {
@@ -63,7 +65,9 @@ object GalleryLibraryStore {
                 ?: emptySet()
             val pendingMoves = mutableMapOf<String, String>()
             o.optJSONObject("pendingMoves")?.let { m -> m.keys().forEach { k -> pendingMoves[k] = m.optString(k) } }
-            GalleryLibrary(trash, purged, order, moves, folders, pendingMoves)
+            val covers = mutableMapOf<String, String>()
+            o.optJSONObject("covers")?.let { m -> m.keys().forEach { k -> covers[k] = m.optString(k) } }
+            GalleryLibrary(trash, purged, order, moves, folders, pendingMoves, covers)
         } catch (e: Exception) {
             DebugLogger.e(TAG, "Failed to load library: ${e.message}")
             GalleryLibrary()
@@ -79,6 +83,7 @@ object GalleryLibraryStore {
                 put("moves", JSONObject().apply { library.moves.forEach { (k, v) -> put(k, v) } })
                 put("folders", JSONArray(library.folders.toList()))
                 put("pendingMoves", JSONObject().apply { library.pendingMoves.forEach { (k, v) -> put(k, v) } })
+                put("covers", JSONObject().apply { library.covers.forEach { (k, v) -> put(k, v) } })
             }
             val f = file(context, serverId)
             val tmp = File(f.parentFile, "$FILE.tmp")

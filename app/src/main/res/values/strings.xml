@@ -724,4 +724,6 @@
     <string name="gallery_album_item_count">%1$d items</string>
     <string name="label_no_album">No album</string>
     <string name="gallery_sort_custom">Custom (hold and drag)</string>
+    <string name="gallery_set_cover">Set as album cover</string>
+    <string name="msg_album_cover_set">Album cover set</string>
 </resources>
