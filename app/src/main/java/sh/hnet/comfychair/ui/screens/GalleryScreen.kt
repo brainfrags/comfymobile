@@ -129,6 +129,7 @@ import sh.hnet.comfychair.viewmodel.GallerySortOrder
 import androidx.compose.material.icons.filled.CreateNewFolder
 import sh.hnet.comfychair.ui.components.gallerySelectGestures
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.RestoreFromTrash
@@ -498,13 +499,23 @@ fun GalleryScreen(
                     )
                 } else {
                     if (!showAlbumList) {
-                        // View mode menu (2/3/4 columns, original ratio, single column)
+                        // One menu for slideshow, view mode and sort order (keeps room for the tabs)
                         Box {
                             var showViewMenu by remember { mutableStateOf(false) }
                             IconButton(onClick = { showViewMenu = true }) {
-                                Icon(viewModeIcon(viewMode), contentDescription = stringResource(R.string.gallery_view_mode))
+                                Icon(Icons.Default.Tune, contentDescription = stringResource(R.string.gallery_view_mode))
                             }
                             DropdownMenu(expanded = showViewMenu, onDismissRequest = { showViewMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.gallery_slideshow)) },
+                                    onClick = {
+                                        showViewMenu = false
+                                        launchMediaViewer(null, startSlideshow = true)
+                                    },
+                                    enabled = uiState.items.isNotEmpty(),
+                                    leadingIcon = { Icon(Icons.Default.Slideshow, contentDescription = null) }
+                                )
+                                HorizontalDivider()
                                 GalleryViewMode.entries.forEach { mode ->
                                     DropdownMenuItem(
                                         text = { Text(stringResource(viewModeLabel(mode))) },
@@ -516,15 +527,7 @@ fun GalleryScreen(
                                         trailingIcon = { if (mode == viewMode) Icon(Icons.Default.Check, contentDescription = null) }
                                     )
                                 }
-                            }
-                        }
-                        // Sort order menu
-                        Box {
-                            var showSortMenu by remember { mutableStateOf(false) }
-                            IconButton(onClick = { showSortMenu = true }) {
-                                Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = stringResource(R.string.gallery_sort))
-                            }
-                            DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
+                                HorizontalDivider()
                                 listOf(
                                     GallerySortOrder.NEWEST to R.string.gallery_sort_newest,
                                     GallerySortOrder.OLDEST to R.string.gallery_sort_oldest,
@@ -536,8 +539,9 @@ fun GalleryScreen(
                                         text = { Text(stringResource(labelRes)) },
                                         onClick = {
                                             galleryViewModel.setSortOrder(order)
-                                            showSortMenu = false
+                                            showViewMenu = false
                                         },
+                                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = null) },
                                         trailingIcon = { if (uiState.sortOrder == order) Icon(Icons.Default.Check, contentDescription = null) }
                                     )
                                 }
@@ -548,19 +552,12 @@ fun GalleryScreen(
                         IconButton(onClick = { editingAlbum = selectedAlbum }) {
                             Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.gallery_edit_album))
                         }
-                    } else {
+                    } else if (showAlbumList) {
                         IconButton(onClick = { showNewAlbumDialog = true }) {
                             Icon(Icons.Default.CreateNewFolder, contentDescription = stringResource(R.string.gallery_new_album))
                         }
                     }
                     if (!showAlbumList) {
-                        IconButton(
-                            // Slideshow plays towards the top of the list, so start from the last item
-                            onClick = { launchMediaViewer(null, startSlideshow = true) },
-                            enabled = uiState.items.isNotEmpty()
-                        ) {
-                            Icon(Icons.Default.Slideshow, contentDescription = stringResource(R.string.gallery_slideshow))
-                        }
                         IconButton(onClick = { galleryViewModel.enterSelectionMode() }) {
                             Icon(Icons.Default.Checklist, contentDescription = stringResource(R.string.button_gallery_select))
                         }
@@ -865,7 +862,7 @@ private fun GalleryTabs(
                     .clip(CircleShape)
                     .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
                     .clickable { onSelect(tab) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
             )
         }
     }
