@@ -1,0 +1,24 @@
+# ComfyMobile file operations (ComfyUI extension)
+
+ComfyMobile shows each subfolder of ComfyUI's `output` folder as an album. Adding images
+to an album, moving them between albums, renaming or deleting an album moves the files on
+the server.
+
+ComfyUI's own API can't list subfolders or move files, so install this small extension on
+the PC running ComfyUI:
+
+1. Copy the `comfymobile_files` folder into `ComfyUI/custom_nodes/`.
+2. Restart ComfyUI.
+
+It adds these routes (paths are always kept inside the output folder):
+
+| Route | What it does |
+|---|---|
+| `GET /comfymobile/output/list` | All media files in the output tree (newest first) and its subfolders |
+| `POST /comfymobile/output/mkdir` | Create a subfolder |
+| `POST /comfymobile/output/move` | Move files into a subfolder (renamed as `name (1).png` on a clash) |
+| `POST /comfymobile/output/rmdir` | Remove a subfolder if it is empty |
+
+Without the extension the app still works, with limits: subfolders are only found through
+the history (or the assets API with `--enable-assets`), and "moving" copies the file into the
+album folder through ComfyUI's upload API while the original stays on the disk (hidden in the app).
