@@ -20,8 +20,9 @@ import java.io.File
  * - pendingMoves: prompts generated while a folder album was selected (prompt id -> folder);
  *   their files are moved into the folder once they appear
  *
- * Items are identified by their file ([fileId]) rather than by prompt, so an image
- * keeps its state whether it comes from the history or straight from the output folder.
+ * Items are identified by [itemId]: a generated image by its prompt and filename (ComfyUI
+ * reuses a filename once the old file was moved or deleted, so a path alone could point a
+ * new image at an old one's state), a file found only in the output folder by its path.
  *
  * Stored in filesDir/local_gallery/{serverId}/library.json
  */
@@ -43,6 +44,13 @@ object GalleryLibraryStore {
     /** Stable identity of the file behind a gallery item. */
     fun fileId(item: GalleryItem): String =
         "${item.type}/${item.subfolder.replace('\\', '/').trim('/')}/${item.filename}"
+
+    /** Prefix of [itemId] for images from the history */
+    const val HISTORY_PREFIX = "h:"
+
+    /** Stable identity of an item for the library (trash, order, covers, moves, purged). */
+    fun itemId(item: GalleryItem): String =
+        if (item.promptId.startsWith("file:")) fileId(item) else "$HISTORY_PREFIX${item.promptId}_${item.filename}"
 
     /** File id of a path relative to the output folder ("sub/a.png"). */
     fun outputFileId(path: String): String =

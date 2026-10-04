@@ -88,8 +88,8 @@ enum class GallerySortOrder {
             if (order.isEmpty()) return items
             val position = HashMap<String, Int>(order.size * 2)
             order.forEachIndexed { i, id -> position.putIfAbsent(id, i) }
-            val (ordered, fresh) = items.partition { GalleryLibraryStore.fileId(it) in position }
-            return fresh + ordered.sortedBy { position[GalleryLibraryStore.fileId(it)] }
+            val (ordered, fresh) = items.partition { GalleryLibraryStore.itemId(it) in position }
+            return fresh + ordered.sortedBy { position[GalleryLibraryStore.itemId(it)] }
         }
     }
 }
@@ -231,7 +231,7 @@ class GalleryViewModel : ViewModel() {
                     albumCounts = albumItems.mapValues { it.value.size },
                     // The chosen cover if it is still in the album, else the first item
                     albumCovers = albumItems.mapNotNull { (id, list) ->
-                        val chosen = covers[id]?.let { fileId -> list.firstOrNull { GalleryLibraryStore.fileId(it) == fileId } }
+                        val chosen = covers[id]?.let { fileId -> list.firstOrNull { GalleryLibraryStore.itemId(it) == fileId } }
                         (chosen ?: list.firstOrNull())?.let { id to it }
                     }.toMap(),
                     isLoading = isLoading,
@@ -518,7 +518,7 @@ class GalleryViewModel : ViewModel() {
     /** Use the (one) selected item as the cover of [albumId]. */
     fun setSelectedAsCover(albumId: String) {
         val item = getSelectedItems().singleOrNull() ?: return
-        repository.setAlbumCover(albumId, GalleryLibraryStore.fileId(item))
+        repository.setAlbumCover(albumId, GalleryLibraryStore.itemId(item))
         clearSelection()
         viewModelScope.launch { _events.emit(GalleryEvent.ShowToast(R.string.msg_album_cover_set)) }
     }
@@ -606,7 +606,7 @@ class GalleryViewModel : ViewModel() {
         val sort = _viewState.value.sortOrder
         if (sort == GallerySortOrder.CUSTOM) return
         val full = sort.apply(repository.galleryItems.value.distinctBy { getItemKey(it) })
-            .map { GalleryLibraryStore.fileId(it) }
+            .map { GalleryLibraryStore.itemId(it) }
         val shownIds = full.toHashSet()
         repository.setOrder(full + repository.library.value.order.filter { it !in shownIds })
         setSortOrder(GallerySortOrder.CUSTOM)
@@ -626,9 +626,9 @@ class GalleryViewModel : ViewModel() {
         val full = GallerySortOrder.applyCustomOrder(
             repository.galleryItems.value.distinctBy { getItemKey(it) },
             repository.library.value.order
-        ).map { GalleryLibraryStore.fileId(it) }.toMutableList()
-        val fromId = GalleryLibraryStore.fileId(shown[fromIndex])
-        val toId = GalleryLibraryStore.fileId(shown[toIndex])
+        ).map { GalleryLibraryStore.itemId(it) }.toMutableList()
+        val fromId = GalleryLibraryStore.itemId(shown[fromIndex])
+        val toId = GalleryLibraryStore.itemId(shown[toIndex])
         full.remove(fromId)
         val target = full.indexOf(toId)
         if (target < 0) return

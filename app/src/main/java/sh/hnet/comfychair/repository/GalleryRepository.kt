@@ -270,13 +270,17 @@ class GalleryRepository private constructor() {
             }
 
             if (context != null && serverId != null) ensureLibrary(context, serverId)
+            val historyItems = parseHistoryToGalleryItems(historyJson)
+            // Listing first: it tells which files really exist (needed to read older saved data)
+            val listing = withContext(Dispatchers.IO) { client.listOutputFiles() }
+            migrateLegacyIds(historyItems, listing)
             val library = _library.value
 
             // Point history items at files moved by the app; items deleted for good are not
             // registered again (and not downloaded again)
-            var items = parseHistoryToGalleryItems(historyJson)
+            var items = historyItems
                 .map { applyMove(it, library.moves) }
-                .filter { GalleryLibraryStore.fileId(it) !in library.purged }
+                .filter { GalleryLibraryStore.itemId(it) !in library.purged }
 
             // Merge with items kept on the device (survive server-side deletion)
             if (context != null && serverId != null) {
@@ -287,8 +291,8 @@ class GalleryRepository private constructor() {
             }
 
             // Everything else in the output folder (no generation info; that's fine)
-            val listing = withContext(Dispatchers.IO) { client.listOutputFiles() }
             if (listing != null) {
+                synchronized(stateLock) { recentFileMoves.clear() }
                 val known = items.mapTo(HashSet()) { GalleryLibraryStore.fileId(applyMove(it, library.moves)) }
                 items = items + listing.files.mapNotNull { path ->
                     outputFileItem(path).takeIf { GalleryLibraryStore.fileId(it) !in known }
@@ -396,10 +400,10 @@ class GalleryRepository private constructor() {
         allItems = rawItems
             .map { applyMove(it, library.moves) }
             .distinctBy { GalleryLibraryStore.fileId(it) }
-            .filter { GalleryLibraryStore.fileId(it) !in library.purged }
-        val (trashed, visible) = allItems.partition { GalleryLibraryStore.fileId(it) in trash }
+            .filter { GalleryLibraryStore.itemId(it) !in library.purged }
+        val (trashed, visible) = allItems.partition { GalleryLibraryStore.itemId(it) in trash }
         _galleryItems.value = visible
-        _trashedItems.value = trashed.sortedByDescending { trash[GalleryLibraryStore.fileId(it)] ?: 0L }
+        _trashedItems.value = trashed.sortedByDescending { trash[GalleryLibraryStore.itemId(it)] ?: 0L }
     }
 
     private fun updateLibrary(transform: (GalleryLibrary) -> GalleryLibrary) {
@@ -434,12 +438,12 @@ class GalleryRepository private constructor() {
     fun moveToTrash(items: Collection<GalleryItem>) {
         if (items.isEmpty()) return
         val now = System.currentTimeMillis()
-        updateLibrary { lib -> lib.copy(trash = lib.trash + items.map { GalleryLibraryStore.fileId(it) to now }) }
+        updateLibrary { lib -> lib.copy(trash = lib.trash + items.map { GalleryLibraryStore.itemId(it) to now }) }
     }
 
     fun restoreFromTrash(items: Collection<GalleryItem>) {
         if (items.isEmpty()) return
-        val ids = items.map { GalleryLibraryStore.fileId(it) }.toSet()
+        val ids = items.map { GalleryLibraryStore.itemId(it) }.toSet()
         updateLibrary { lib -> lib.copy(trash = lib.trash - ids) }
     }
 
@@ -448,9 +452,14 @@ class GalleryRepository private constructor() {
         updateLibrary { lib -> lib.copy(order = order) }
     }
 
+    // Files found only in the output folder that were just moved; the next listing shows them
+    // at their new place, so this is not kept (their old path may be reused by a new image)
+    private val recentFileMoves = HashMap<String, String>()
+
     /** The item at the location the app moved its file to, if it was moved. */
     private fun applyMove(item: GalleryItem, moves: Map<String, String>): GalleryItem {
-        val path = moves[GalleryLibraryStore.fileId(item)] ?: return item
+        val path = (if (isOutputFilePromptId(item.promptId)) recentFileMoves[GalleryLibraryStore.fileId(item)]
+            else moves[GalleryLibraryStore.itemId(item)]) ?: return item
         return item.copy(
             type = "output",
             subfolder = path.substringBeforeLast('/', ""),
@@ -492,19 +501,19 @@ class GalleryRepository private constructor() {
         val toMove = items.filter { it.type != "output" || it.subfolder != folder }
         if (toMove.isEmpty()) return 0
 
-        // fileId of each item -> its new path relative to the output folder
-        val newPaths: Map<String, String> = withContext(Dispatchers.IO) {
+        // Each item -> its new path relative to the output folder
+        val newPaths: Map<GalleryItem, String> = withContext(Dispatchers.IO) {
             if (client.hasFileOps) {
                 val byKey = toMove.associateBy { "${it.type}/${pathOf(it)}" }
                 val moved = client.moveOutputFiles(byKey.keys.map { k -> byKey.getValue(k).let { it.type to pathOf(it) } }, folder)
                     ?: emptyMap()
-                moved.mapNotNull { (key, newPath) -> byKey[key]?.let { GalleryLibraryStore.fileId(it) to newPath } }.toMap()
+                moved.mapNotNull { (key, newPath) -> byKey[key]?.let { it to newPath } }.toMap()
             } else {
                 toMove.mapNotNull { item ->
                     val bytes = kotlin.coroutines.suspendCoroutine<ByteArray?> { cont ->
                         client.fetchRawBytes(item.filename, item.subfolder, item.type) { b, _ -> cont.resumeWith(Result.success(b)) }
                     } ?: return@mapNotNull null
-                    client.uploadToOutput(bytes, item.filename, folder)?.let { GalleryLibraryStore.fileId(item) to it }
+                    client.uploadToOutput(bytes, item.filename, folder)?.let { item to it }
                 }.toMap()
             }
         }
@@ -516,35 +525,66 @@ class GalleryRepository private constructor() {
     }
 
     /**
-     * Remember where files went: [newPaths] maps each file's current id to its new path
-     * (relative to the output folder). Order, covers and the trash follow the file.
-     * [copied]: the original is still on the PC (hidden in the app).
+     * Remember where files went: [newPaths] maps items to their new path (relative to the
+     * output folder). [copied]: the original is still on the PC (hidden in the app).
      */
-    private fun recordMoves(newPaths: Map<String, String>, copied: Boolean) {
+    private fun recordMoves(newPaths: Map<GalleryItem, String>, copied: Boolean) {
         if (newPaths.isEmpty()) return
+        synchronized(stateLock) {
+            for ((item, newPath) in newPaths) {
+                if (isOutputFilePromptId(item.promptId)) recentFileMoves[GalleryLibraryStore.fileId(item)] = newPath
+            }
+        }
         updateLibrary { lib ->
             val moves = lib.moves.toMutableMap()
-            val order = lib.order.toMutableList()
             val purged = lib.purged.toMutableSet()
-            val covers = lib.covers.toMutableMap()
-            val trash = lib.trash.toMutableMap()
-            for ((currentId, newPath) in newPaths) {
-                val newId = GalleryLibraryStore.outputFileId(newPath)
-                if (newId == currentId) continue
-                // Keep the move keyed by the file's original id (what the history reports)
-                val originalId = moves.entries.firstOrNull { GalleryLibraryStore.outputFileId(it.value) == currentId }?.key
-                    ?: currentId
-                moves[originalId] = newPath
-                // A copied original is still listed in the output folder; hide it
-                if (copied) purged.add(currentId)
-                purged.remove(newId)
-                val i = order.indexOf(currentId)
-                if (i >= 0) order[i] = newId
-                // A cover and a trashed state follow their file
-                covers.entries.filter { it.value == currentId }.forEach { it.setValue(newId) }
-                trash.remove(currentId)?.let { trash[newId] = it }
+            for ((item, newPath) in newPaths) {
+                // Generated images: keyed by prompt + filename, so a new image that gets the
+                // old filename is not sent here too
+                if (!isOutputFilePromptId(item.promptId)) moves[GalleryLibraryStore.itemId(item)] = newPath
+                // A copied original is still listed in the output folder; hide that file
+                if (copied) purged.add(GalleryLibraryStore.fileId(item))
             }
-            lib.copy(moves = moves, order = order, purged = purged, covers = covers, trash = trash)
+            lib.copy(moves = moves, purged = purged)
+        }
+    }
+
+    /**
+     * Read library entries saved by older versions, which identified history images by path
+     * ("output/sub/name.png"): moves, trash, order and covers are moved to the image they
+     * meant (the oldest history image with that path); deletions are kept only for files that
+     * are not in the history, so a new image that reused a deleted file's name shows up.
+     */
+    private fun migrateLegacyIds(historyItems: List<GalleryItem>, listing: ComfyUIClient.OutputListing?) {
+        val lib = _library.value
+        fun isLegacy(id: String) = id.startsWith("output/") || id.startsWith("temp/") || id.startsWith("input/")
+        val byPath = historyItems.groupBy { GalleryLibraryStore.fileId(it) }
+        // Path ids are still right for files that are only in the output folder
+        val legacy = (lib.trash.keys + lib.order + lib.covers.values + lib.purged).filter { isLegacy(it) && it in byPath } +
+            lib.moves.keys.filter(::isLegacy)
+        if (legacy.isEmpty()) return
+        val listed = listing?.files?.mapTo(HashSet()) { GalleryLibraryStore.outputFileId(it) } ?: emptySet()
+        // The image an old path id meant: the oldest history image at that path
+        fun owner(pathId: String): GalleryItem? = byPath[pathId]?.minByOrNull { if (it.timestamp > 0) it.timestamp else it.index.toLong() }
+        fun convert(id: String): String = if (isLegacy(id)) owner(id)?.let { GalleryLibraryStore.itemId(it) } ?: id else id
+
+        val moves = mutableMapOf<String, String>()
+        for ((key, path) in lib.moves) {
+            if (!isLegacy(key)) { moves[key] = path; continue }
+            val candidates = byPath[key].orEmpty()
+            // With real moves the old path is free; one image there that still exists on the PC
+            // is a new image that reused the name, not the one that was moved
+            if (candidates.size == 1 && listing?.fileOps == true && key in listed) continue
+            owner(key)?.let { moves[GalleryLibraryStore.itemId(it)] = path }
+        }
+        updateLibrary {
+            it.copy(
+                moves = moves,
+                trash = it.trash.mapKeys { (k, _) -> convert(k) },
+                order = it.order.map(::convert),
+                covers = it.covers.mapValues { (_, v) -> convert(v) },
+                purged = it.purged.filterTo(HashSet()) { id -> !isLegacy(id) || id !in byPath }
+            )
         }
     }
 
@@ -571,7 +611,13 @@ class GalleryRepository private constructor() {
         } else null
         val failed: Int
         if (wholeFolder != null) {
-            recordMoves(wholeFolder.entries.associate { (old, new) -> GalleryLibraryStore.outputFileId(old) to new }, copied = false)
+            val byPath = itemsInFolder(from).groupBy { GalleryLibraryStore.fileId(it) }
+            recordMoves(
+                wholeFolder.entries.flatMap { (old, new) ->
+                    byPath[GalleryLibraryStore.outputFileId(old)].orEmpty().map { it to new }
+                }.toMap(),
+                copied = false
+            )
             failed = 0
         } else {
             val items = itemsInFolder(from)
@@ -635,20 +681,17 @@ class GalleryRepository private constructor() {
     suspend fun deleteRootDuplicates(duplicates: List<Pair<String, String>>): Int {
         val client = comfyUIClient ?: return 0
         if (duplicates.isEmpty()) return 0
-        // History items that point at a root copy now point at the kept copy
+        // History images whose file is a root copy now point at the kept copy
         val rootToKeep = duplicates.associate { (root, keep) -> GalleryLibraryStore.outputFileId(root) to keep }
-        val historyIds = synchronized(stateLock) {
-            rawItems.filter { !isOutputFilePromptId(it.promptId) }.map { GalleryLibraryStore.fileId(it) }.toSet()
+        val atRoot = synchronized(stateLock) {
+            allItems.filter { !isOutputFilePromptId(it.promptId) && GalleryLibraryStore.fileId(it) in rootToKeep }
         }
-        updateLibrary { lib ->
-            val moves = lib.moves.toMutableMap()
-            for ((rootId, keep) in rootToKeep) {
-                val originalId = moves.entries.firstOrNull { GalleryLibraryStore.outputFileId(it.value) == rootId }?.key
-                    ?: rootId.takeIf { it in historyIds }
-                    ?: continue
-                moves[originalId] = keep
+        if (atRoot.isNotEmpty()) {
+            updateLibrary { lib ->
+                lib.copy(moves = lib.moves + atRoot.associate {
+                    GalleryLibraryStore.itemId(it) to rootToKeep.getValue(GalleryLibraryStore.fileId(it))
+                })
             }
-            lib.copy(moves = moves)
         }
         val deleted = withContext(Dispatchers.IO) { client.deleteOutputFiles(duplicates.map { it.first }) }
         // Gone from disk: drop the root listing right away (a refresh confirms it)
@@ -673,8 +716,15 @@ class GalleryRepository private constructor() {
         if (serverSyncJob?.isActive == true) return
         serverSyncJob = scope.launch {
             try {
+                // Only files no history image uses (a new image may have reused a deleted name)
                 val purged = _library.value.purged
-                val leftovers = listedFiles.filter { GalleryLibraryStore.outputFileId(it) in purged }
+                val historyPaths = synchronized(stateLock) {
+                    allItems.filter { !isOutputFilePromptId(it.promptId) }.mapTo(HashSet()) { GalleryLibraryStore.fileId(it) }
+                }
+                val leftovers = listedFiles.filter {
+                    val id = GalleryLibraryStore.outputFileId(it)
+                    id in purged && id !in historyPaths
+                }
                 if (leftovers.isNotEmpty()) {
                     DebugLogger.i(TAG, "Deleting ${leftovers.size} files deleted in the app")
                     withContext(Dispatchers.IO) { client.deleteOutputFiles(leftovers) }
@@ -746,7 +796,7 @@ class GalleryRepository private constructor() {
      */
     suspend fun deletePermanently(items: Collection<GalleryItem>) {
         if (items.isEmpty()) return
-        val ids = items.map { GalleryLibraryStore.fileId(it) }.toSet()
+        val ids = items.map { GalleryLibraryStore.itemId(it) }.toSet()
         updateLibrary { lib ->
             lib.copy(trash = lib.trash - ids, purged = lib.purged + ids, order = lib.order - ids)
         }
