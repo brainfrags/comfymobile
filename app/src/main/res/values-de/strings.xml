@@ -634,6 +634,10 @@
     <string name="gallery_album_name_hint">Albumname</string>
     <string name="gallery_delete_album">Album löschen</string>
     <string name="gallery_delete_album_note">Die Elemente bleiben in der Galerie.</string>
+    <string name="gallery_hide_album">Album ausblenden</string>
+    <string name="gallery_unhide_album">Album einblenden</string>
+    <string name="gallery_show_hidden_albums">Ausgeblendete Alben anzeigen</string>
+    <string name="gallery_hidden_album">Ausgeblendetes Album</string>
     <string name="gallery_button_create">Erstellen</string>
     <string name="msg_added_to_album">Zum Album hinzugefügt</string>
     <string name="msg_removed_from_album">Aus Album entfernt</string>
@@ -695,6 +699,8 @@
     <string name="gallery_sort_custom">Benutzerdefiniert (halten und ziehen)</string>
     <string name="gallery_set_cover">Als Albumcover festlegen</string>
     <string name="msg_album_cover_set">Albumcover festgelegt</string>
+    <string name="msg_album_hidden">Album ausgeblendet</string>
+    <string name="msg_album_unhidden">Album eingeblendet</string>
     <string name="gallery_clean_duplicates">Duplikate bereinigen</string>
     <string name="gallery_clean_duplicates_confirm">%d Bilder im Output-Ordner löschen, die auch in einem Album sind? Die Kopien in den Alben bleiben erhalten. Die Dateien werden auf dem PC gelöscht.</string>
     <string name="msg_no_duplicates">Keine Duplikate zwischen Output-Ordner und Alben</string>

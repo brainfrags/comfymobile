@@ -1469,7 +1469,13 @@ class ComfyUIClient(
      * @property fileOps True when the ComfyMobile extension is installed on the server, so
      *           files can be moved and folders created/removed
      */
-    data class OutputListing(val files: List<String>, val folders: List<String>, val fileOps: Boolean)
+    data class OutputListing(
+        val files: List<String>,
+        val folders: List<String>,
+        val fileOps: Boolean,
+        /** Modification time (ms since epoch) of each file, when the server reports it */
+        val times: Map<String, Long> = emptyMap()
+    )
 
     /** True once the ComfyMobile extension was found on this server (see [listOutputFiles]). */
     @Volatile
@@ -1542,12 +1548,17 @@ class ComfyUIClient(
                 val json = JSONObject(body)
                 val files = json.optJSONArray("files") ?: org.json.JSONArray()
                 val folders = json.optJSONArray("folders") ?: org.json.JSONArray()
+                // Older extensions don't send times
+                val times = json.optJSONArray("times")
                 hasFileOps = true
                 fileOpsVersion = json.optInt("version", 1)
+                val paths = (0 until files.length()).map { files.getString(it) }
                 return OutputListing(
-                    files = (0 until files.length()).map { files.getString(it) }.filter { isMediaFile(it) },
+                    files = paths.filter { isMediaFile(it) },
                     folders = (0 until folders.length()).map { folders.getString(it) },
-                    fileOps = true
+                    fileOps = true,
+                    times = if (times == null || times.length() != paths.size) emptyMap()
+                    else paths.indices.associate { paths[it] to times.optLong(it) }
                 )
             } catch (e: Exception) {
                 DebugLogger.w(TAG, "Could not parse extension listing: ${e.message}")

@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 import sh.hnet.comfychair.cache.MediaCache
 import sh.hnet.comfychair.connection.ConnectionManager
 import sh.hnet.comfychair.storage.LocalGalleryStore
-import sh.hnet.comfychair.viewmodel.GalleryItem
+import sh.hnet.comfychair.gallery.GalleryItem
 import java.util.concurrent.ConcurrentHashMap
 
 /**

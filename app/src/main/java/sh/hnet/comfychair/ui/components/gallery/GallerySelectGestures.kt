@@ -1,4 +1,4 @@
-package sh.hnet.comfychair.ui.components
+package sh.hnet.comfychair.ui.components.gallery
 
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown

@@ -5,7 +5,8 @@ ComfyUI's own API can't list subfolders of the output folder or move files.
 This extension adds a few small routes the ComfyMobile app uses so that albums
 are real subfolders of the output folder:
 
-  GET  /comfymobile/output/list    -> {"version", "files": [...], "folders": [...]}
+  GET  /comfymobile/output/list    -> {"version", "files": [...], "times": [...], "folders": [...]}
+                                      ("times": each file's modification time, ms since epoch)
   POST /comfymobile/output/mkdir   {"path": "album"}
   POST /comfymobile/output/move    {"items": [{"type": "output", "path": "a.png"}], "to": "album"}
   POST /comfymobile/output/rmdir   {"path": "album"}   (only removes an empty folder)
@@ -117,7 +118,12 @@ def _scan():
                 continue
             files.append((mtime, _rel(base, path)))
     files.sort(key=lambda t: -t[0])
-    return {"version": VERSION, "files": [f for _, f in files], "folders": sorted(folders)}
+    return {
+        "version": VERSION,
+        "files": [f for _, f in files],
+        "times": [int(t * 1000) for t, _ in files],
+        "folders": sorted(folders),
+    }
 
 
 @routes.get("/comfymobile/output/list")

@@ -10,7 +10,7 @@ import org.json.JSONObject
 import sh.hnet.comfychair.ComfyUIClient
 import sh.hnet.comfychair.cache.MediaCacheKey
 import sh.hnet.comfychair.util.DebugLogger
-import sh.hnet.comfychair.viewmodel.GalleryItem
+import sh.hnet.comfychair.gallery.GalleryItem
 import java.io.File
 import kotlin.coroutines.resume
 
@@ -116,8 +116,17 @@ object LocalGalleryStore {
      * Register the items currently on the server and return the merged list:
      * server items plus items only kept on the device, newest first.
      * [serverItems] must be ordered newest first.
+     *
+     * @param fileOnServer Whether an item that is no longer in the server's history still has
+     *   its file on the server (ComfyUI forgets its history when it restarts). Such items are
+     *   kept as they were (date, generation info) even if they are not downloaded yet.
      */
-    fun mergeWithServer(context: Context, serverId: String, serverItems: List<GalleryItem>): List<GalleryItem> =
+    fun mergeWithServer(
+        context: Context,
+        serverId: String,
+        serverItems: List<GalleryItem>,
+        fileOnServer: (GalleryItem) -> Boolean = { false }
+    ): List<GalleryItem> =
         synchronized(lock) {
             val idx = index(context, serverId)
             var nextSeq = (idx.values.maxOfOrNull { it.seq } ?: 0L) + 1
@@ -138,9 +147,9 @@ object LocalGalleryStore {
                 }
             }
             persist(context, serverId)
-            val onServer = serverItems.map { it.toCacheKey().keyString }.toHashSet()
+            val onServer = serverItems.mapTo(HashSet()) { it.key }
             idx.values
-                .filter { it.downloaded || it.item.toCacheKey().keyString in onServer }
+                .filter { it.downloaded || it.item.key in onServer || fileOnServer(it.item) }
                 .sortedByDescending { it.seq }
                 .map { it.toItem() }
         }

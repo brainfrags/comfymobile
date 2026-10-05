@@ -74,7 +74,7 @@ import sh.hnet.comfychair.R
 import sh.hnet.comfychair.navigation.MainRoute
 import sh.hnet.comfychair.repository.GalleryRepository
 import sh.hnet.comfychair.ui.components.rememberGalleryThumbnail
-import sh.hnet.comfychair.viewmodel.GalleryItem
+import sh.hnet.comfychair.gallery.GalleryItem
 
 /** Brand colors (from the CM logo). */
 object Brand {

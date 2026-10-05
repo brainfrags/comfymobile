@@ -3,8 +3,8 @@ package sh.hnet.comfychair.storage
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import sh.hnet.comfychair.gallery.GalleryItem
 import sh.hnet.comfychair.util.DebugLogger
-import sh.hnet.comfychair.viewmodel.GalleryItem
 import java.io.File
 
 /**
@@ -17,12 +17,12 @@ import java.io.File
  * - folders: album folders created in the app (shown even while empty)
  * - covers: album cover chosen by the user (album id -> file id)
  * - albumOrder: custom album order set by drag and drop (album ids, first = top)
+ * - hiddenAlbums: albums hidden from the album list (album ids)
+ * - albumSorts: item order inside an album, if it has its own (album id -> sort order name)
  * - pendingMoves: prompts generated while a folder album was selected (prompt id -> folder);
  *   their files are moved into the folder once they appear
  *
- * Items are identified by [itemId]: a generated image by its prompt and filename (ComfyUI
- * reuses a filename once the old file was moved or deleted, so a path alone could point a
- * new image at an old one's state), a file found only in the output folder by its path.
+ * Items are identified by [GalleryItem.libraryId].
  *
  * Stored in filesDir/local_gallery/{serverId}/library.json
  */
@@ -34,27 +34,14 @@ data class GalleryLibrary(
     val folders: Set<String> = emptySet(),
     val pendingMoves: Map<String, String> = emptyMap(),
     val covers: Map<String, String> = emptyMap(),
-    val albumOrder: List<String> = emptyList()
+    val albumOrder: List<String> = emptyList(),
+    val hiddenAlbums: Set<String> = emptySet(),
+    val albumSorts: Map<String, String> = emptyMap()
 )
 
 object GalleryLibraryStore {
     private const val TAG = "GalleryLibrary"
     private const val FILE = "library.json"
-
-    /** Stable identity of the file behind a gallery item. */
-    fun fileId(item: GalleryItem): String =
-        "${item.type}/${item.subfolder.replace('\\', '/').trim('/')}/${item.filename}"
-
-    /** Prefix of [itemId] for images from the history */
-    const val HISTORY_PREFIX = "h:"
-
-    /** Stable identity of an item for the library (trash, order, covers, moves, purged). */
-    fun itemId(item: GalleryItem): String =
-        if (item.promptId.startsWith("file:")) fileId(item) else "$HISTORY_PREFIX${item.promptId}_${item.filename}"
-
-    /** File id of a path relative to the output folder ("sub/a.png"). */
-    fun outputFileId(path: String): String =
-        "output/${path.substringBeforeLast('/', "")}/${path.substringAfterLast('/')}"
 
     private fun file(context: Context, serverId: String): File =
         File(File(File(context.filesDir, "local_gallery"), serverId).apply { mkdirs() }, FILE)
@@ -80,7 +67,11 @@ object GalleryLibraryStore {
             o.optJSONObject("covers")?.let { m -> m.keys().forEach { k -> covers[k] = m.optString(k) } }
             val albumOrder = o.optJSONArray("albumOrder")?.let { a -> (0 until a.length()).map { a.getString(it) } }
                 ?: emptyList()
-            GalleryLibrary(trash, purged, order, moves, folders, pendingMoves, covers, albumOrder)
+            val hiddenAlbums = o.optJSONArray("hiddenAlbums")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() }
+                ?: emptySet()
+            val albumSorts = mutableMapOf<String, String>()
+            o.optJSONObject("albumSorts")?.let { m -> m.keys().forEach { k -> albumSorts[k] = m.optString(k) } }
+            GalleryLibrary(trash, purged, order, moves, folders, pendingMoves, covers, albumOrder, hiddenAlbums, albumSorts)
         } catch (e: Exception) {
             DebugLogger.e(TAG, "Failed to load library: ${e.message}")
             GalleryLibrary()
@@ -98,6 +89,8 @@ object GalleryLibraryStore {
                 put("pendingMoves", JSONObject().apply { library.pendingMoves.forEach { (k, v) -> put(k, v) } })
                 put("covers", JSONObject().apply { library.covers.forEach { (k, v) -> put(k, v) } })
                 put("albumOrder", JSONArray(library.albumOrder))
+                put("hiddenAlbums", JSONArray(library.hiddenAlbums.toList()))
+                put("albumSorts", JSONObject().apply { library.albumSorts.forEach { (k, v) -> put(k, v) } })
             }
             val f = file(context, serverId)
             val tmp = File(f.parentFile, "$FILE.tmp")

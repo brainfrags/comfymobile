@@ -129,7 +129,7 @@ import sh.hnet.comfychair.cache.MediaCache
 import sh.hnet.comfychair.storage.LocalGalleryStore
 import sh.hnet.comfychair.util.MetadataParser
 import sh.hnet.comfychair.util.PngMetadataExtractor
-import sh.hnet.comfychair.viewmodel.GalleryItem
+import sh.hnet.comfychair.gallery.GalleryItem
 import sh.hnet.comfychair.viewmodel.MediaViewerItem
 import sh.hnet.comfychair.ui.components.generate.Brand
 import sh.hnet.comfychair.ui.components.generate.BatchTile

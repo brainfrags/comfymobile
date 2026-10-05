@@ -665,6 +665,10 @@
     <string name="gallery_album_name_hint">Album name</string>
     <string name="gallery_delete_album">Delete album</string>
     <string name="gallery_delete_album_note">Items stay in the gallery.</string>
+    <string name="gallery_hide_album">Hide album</string>
+    <string name="gallery_unhide_album">Unhide album</string>
+    <string name="gallery_show_hidden_albums">Show hidden albums</string>
+    <string name="gallery_hidden_album">Hidden album</string>
     <string name="gallery_button_create">Create</string>
     <string name="msg_added_to_album">Added to album</string>
     <string name="msg_removed_from_album">Removed from album</string>
@@ -726,6 +730,8 @@
     <string name="gallery_sort_custom">Custom (hold and drag)</string>
     <string name="gallery_set_cover">Set as album cover</string>
     <string name="msg_album_cover_set">Album cover set</string>
+    <string name="msg_album_hidden">Album hidden</string>
+    <string name="msg_album_unhidden">Album unhidden</string>
     <string name="gallery_clean_duplicates">Clean up duplicates</string>
     <string name="gallery_clean_duplicates_confirm">Delete %d images in the output folder that are also in an album? The album copies are kept. This deletes the files on the PC.</string>
     <string name="msg_no_duplicates">No duplicates between the output folder and albums</string>

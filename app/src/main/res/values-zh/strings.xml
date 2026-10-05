@@ -636,6 +636,10 @@
     <string name="gallery_album_name_hint">相册名称</string>
     <string name="gallery_delete_album">删除相册</string>
     <string name="gallery_delete_album_note">项目仍保留在图库中。</string>
+    <string name="gallery_hide_album">隐藏相册</string>
+    <string name="gallery_unhide_album">取消隐藏相册</string>
+    <string name="gallery_show_hidden_albums">显示隐藏的相册</string>
+    <string name="gallery_hidden_album">隐藏的相册</string>
     <string name="gallery_button_create">创建</string>
     <string name="msg_added_to_album">已添加到相册</string>
     <string name="msg_removed_from_album">已从相册移除</string>
@@ -697,6 +701,8 @@
     <string name="gallery_sort_custom">自定义（长按拖动）</string>
     <string name="gallery_set_cover">设为相册封面</string>
     <string name="msg_album_cover_set">已设置相册封面</string>
+    <string name="msg_album_hidden">相册已隐藏</string>
+    <string name="msg_album_unhidden">相册已取消隐藏</string>
     <string name="gallery_clean_duplicates">清理重复图片</string>
     <string name="gallery_clean_duplicates_confirm">删除 output 文件夹中也存在于相册里的 %d 张图片？相册中的副本会保留。文件将从电脑上删除。</string>
     <string name="msg_no_duplicates">output 文件夹与相册之间没有重复图片</string>

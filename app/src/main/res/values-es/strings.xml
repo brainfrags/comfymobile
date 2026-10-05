@@ -636,6 +636,10 @@
     <string name="gallery_album_name_hint">Nombre del álbum</string>
     <string name="gallery_delete_album">Eliminar álbum</string>
     <string name="gallery_delete_album_note">Los elementos permanecen en la galería.</string>
+    <string name="gallery_hide_album">Ocultar álbum</string>
+    <string name="gallery_unhide_album">Mostrar álbum</string>
+    <string name="gallery_show_hidden_albums">Mostrar álbumes ocultos</string>
+    <string name="gallery_hidden_album">Álbum oculto</string>
     <string name="gallery_button_create">Crear</string>
     <string name="msg_added_to_album">Añadido al álbum</string>
     <string name="msg_removed_from_album">Quitado del álbum</string>
@@ -697,6 +701,8 @@
     <string name="gallery_sort_custom">Personalizado (mantén y arrastra)</string>
     <string name="gallery_set_cover">Usar como portada del álbum</string>
     <string name="msg_album_cover_set">Portada del álbum establecida</string>
+    <string name="msg_album_hidden">Álbum oculto</string>
+    <string name="msg_album_unhidden">Álbum visible de nuevo</string>
     <string name="gallery_clean_duplicates">Limpiar duplicados</string>
     <string name="gallery_clean_duplicates_confirm">¿Eliminar %d imágenes de la carpeta output que también están en un álbum? Las copias de los álbumes se conservan. Los archivos se eliminan del PC.</string>
     <string name="msg_no_duplicates">No hay duplicados entre la carpeta output y los álbumes</string>

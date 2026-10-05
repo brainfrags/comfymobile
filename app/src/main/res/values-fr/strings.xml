@@ -636,6 +636,10 @@
     <string name="gallery_album_name_hint">Nom de l\'album</string>
     <string name="gallery_delete_album">Supprimer l\'album</string>
     <string name="gallery_delete_album_note">Les éléments restent dans la galerie.</string>
+    <string name="gallery_hide_album">Masquer l\'album</string>
+    <string name="gallery_unhide_album">Afficher l\'album</string>
+    <string name="gallery_show_hidden_albums">Afficher les albums masqués</string>
+    <string name="gallery_hidden_album">Album masqué</string>
     <string name="gallery_button_create">Créer</string>
     <string name="msg_added_to_album">Ajouté à l\'album</string>
     <string name="msg_removed_from_album">Retiré de l\'album</string>
@@ -697,6 +701,8 @@
     <string name="gallery_sort_custom">Personnalisé (maintenir et glisser)</string>
     <string name="gallery_set_cover">Définir comme couverture de l\'album</string>
     <string name="msg_album_cover_set">Couverture de l\'album définie</string>
+    <string name="msg_album_hidden">Album masqué</string>
+    <string name="msg_album_unhidden">Album de nouveau visible</string>
     <string name="gallery_clean_duplicates">Nettoyer les doublons</string>
     <string name="gallery_clean_duplicates_confirm">Supprimer %d images du dossier output qui sont aussi dans un album ? Les copies des albums sont conservées. Les fichiers sont supprimés du PC.</string>
     <string name="msg_no_duplicates">Aucun doublon entre le dossier output et les albums</string>

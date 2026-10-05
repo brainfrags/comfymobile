@@ -636,6 +636,10 @@
     <string name="gallery_album_name_hint">Nazwa albumu</string>
     <string name="gallery_delete_album">Usuń album</string>
     <string name="gallery_delete_album_note">Elementy pozostaną w galerii.</string>
+    <string name="gallery_hide_album">Ukryj album</string>
+    <string name="gallery_unhide_album">Odkryj album</string>
+    <string name="gallery_show_hidden_albums">Pokaż ukryte albumy</string>
+    <string name="gallery_hidden_album">Ukryty album</string>
     <string name="gallery_button_create">Utwórz</string>
     <string name="msg_added_to_album">Dodano do albumu</string>
     <string name="msg_removed_from_album">Usunięto z albumu</string>
@@ -697,6 +701,8 @@
     <string name="gallery_sort_custom">Własna (przytrzymaj i przeciągnij)</string>
     <string name="gallery_set_cover">Ustaw jako okładkę albumu</string>
     <string name="msg_album_cover_set">Ustawiono okładkę albumu</string>
+    <string name="msg_album_hidden">Album ukryty</string>
+    <string name="msg_album_unhidden">Album odkryty</string>
     <string name="gallery_clean_duplicates">Usuń duplikaty</string>
     <string name="gallery_clean_duplicates_confirm">Usunąć obrazy z folderu output, które są też w albumie (%d)? Kopie w albumach zostaną zachowane. Pliki zostaną usunięte z komputera.</string>
     <string name="msg_no_duplicates">Brak duplikatów między folderem output a albumami</string>

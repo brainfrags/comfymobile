@@ -4,7 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import sh.hnet.comfychair.util.DebugLogger
-import sh.hnet.comfychair.viewmodel.GalleryItem
+import sh.hnet.comfychair.gallery.GalleryItem
 import java.io.File
 
 /**
@@ -39,6 +39,7 @@ object GalleryMetadataCache {
                     put("type", item.type)
                     put("isVideo", item.isVideo)
                     put("index", item.index)
+                    put("timestamp", item.timestamp)
                 }
                 jsonArray.put(jsonItem)
             }
@@ -78,7 +79,8 @@ object GalleryMetadataCache {
                     subfolder = jsonItem.optString("subfolder", ""),
                     type = jsonItem.optString("type", "output"),
                     isVideo = jsonItem.optBoolean("isVideo", false),
-                    index = jsonItem.optInt("index", i)
+                    index = jsonItem.optInt("index", i),
+                    timestamp = jsonItem.optLong("timestamp", 0L)
                 ))
             }
 

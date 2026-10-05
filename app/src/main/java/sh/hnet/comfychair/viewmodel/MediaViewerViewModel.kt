@@ -1,13 +1,8 @@
 package sh.hnet.comfychair.viewmodel
 
-import android.content.ContentValues
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
-import android.os.Environment
-import android.provider.MediaStore
-import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +20,8 @@ import sh.hnet.comfychair.R
 import sh.hnet.comfychair.cache.MediaCache
 import sh.hnet.comfychair.cache.MediaCacheKey
 import sh.hnet.comfychair.connection.ConnectionManager
+import sh.hnet.comfychair.gallery.GalleryItem
+import sh.hnet.comfychair.gallery.MediaExport
 import sh.hnet.comfychair.repository.GalleryRepository
 import sh.hnet.comfychair.storage.LocalGalleryStore
 import sh.hnet.comfychair.util.GenerationMetadata
@@ -33,7 +30,6 @@ import sh.hnet.comfychair.util.Mp4MetadataExtractor
 import sh.hnet.comfychair.util.PngMetadataExtractor
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
-import java.io.File
 
 /**
  * Viewer mode
@@ -580,7 +576,8 @@ class MediaViewerViewModel : ViewModel() {
                 repository.deletePermanently(listOf(galleryItem))
                 _events.emit(MediaViewerEvent.ShowToast(R.string.msg_history_item_deleted_success))
             } else {
-                repository.moveToTrash(listOf(galleryItem))
+                // Leaves the gallery right away; don't wait for the file to be moved
+                launch { repository.moveToTrash(listOf(galleryItem)) }
                 _events.emit(MediaViewerEvent.ShowToast(R.string.msg_moved_to_trash))
             }
 
@@ -622,307 +619,72 @@ class MediaViewerViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Save and share act on the item shown: in single mode (or for a preview) the bitmap or
+     * video uri on screen, in gallery mode the item fetched from the cache or the server.
+     */
+    private val MediaViewerUiState.showsLocalMedia: Boolean
+        get() = mode == ViewerMode.SINGLE || currentItem?.isPreview == true
+
+    private val MediaViewerUiState.showsVideo: Boolean
+        get() = currentItem?.isVideo == true || (showsLocalMedia && currentVideoUri != null)
+
     fun saveCurrentItem() {
         val context = applicationContext ?: return
         val state = _uiState.value
+        val item = state.currentItem
+        if (!state.showsLocalMedia && item == null) return
+        val isVideo = state.showsVideo
 
         viewModelScope.launch {
-            if (state.mode == ViewerMode.SINGLE || state.currentItem?.isPreview == true) {
-                // Save from current bitmap/video
-                if (state.currentItem?.isVideo == true || state.currentVideoUri != null) {
-                    saveVideoFromUri(context, state.currentVideoUri)
-                } else {
-                    saveBitmapToGallery(context, state.currentBitmap)
-                }
-            } else {
-                // Gallery mode - fetch and save
-                val item = state.currentItem ?: return@launch
-                if (item.isVideo) {
-                    saveVideoFromServer(context, item)
-                } else {
-                    saveImageFromServer(context, item)
-                }
-            }
+            val saved = when {
+                state.showsLocalMedia && isVideo -> state.currentVideoUri
+                    ?.let { uri -> withContext(Dispatchers.IO) { readBytes(context, uri) } }
+                    ?.let { MediaExport.saveVideo(context, it) }
+                state.showsLocalMedia -> state.currentBitmap?.let { MediaExport.saveImage(context, it) }
+                isVideo -> MediaExport.loadVideo(item!!.toCacheKey(), item.subfolder, item.type)
+                    ?.let { MediaExport.saveVideo(context, it) }
+                else -> MediaExport.loadImage(item!!.toCacheKey(), item.subfolder, item.type)
+                    ?.let { MediaExport.saveImage(context, it) }
+            } == true
+            _events.emit(MediaViewerEvent.ShowToast(when {
+                saved && isVideo -> R.string.msg_video_saved_to_gallery
+                saved -> R.string.msg_image_saved_to_gallery
+                isVideo -> R.string.error_save_video
+                else -> R.string.error_save_image
+            }))
         }
     }
 
-    private suspend fun saveBitmapToGallery(context: Context, bitmap: Bitmap?) {
-        if (bitmap == null) {
-            _events.emit(MediaViewerEvent.ShowToast(R.string.error_save_image))
-            return
-        }
-
-        withContext(Dispatchers.IO) {
-            try {
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, "ComfyMobile_${System.currentTimeMillis()}.png")
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ComfyMobile")
-                }
-
-                val resolver = context.contentResolver
-                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-
-                uri?.let { outputUri ->
-                    resolver.openOutputStream(outputUri)?.use { outputStream ->
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-                    }
-                }
-
-                _events.emit(MediaViewerEvent.ShowToast(R.string.msg_image_saved_to_gallery))
-            } catch (e: Exception) {
-                _events.emit(MediaViewerEvent.ShowToast(R.string.error_save_image))
-            }
-        }
-    }
-
-    private suspend fun saveVideoFromUri(context: Context, videoUri: Uri?) {
-        if (videoUri == null) {
-            _events.emit(MediaViewerEvent.ShowToast(R.string.error_save_video))
-            return
-        }
-
-        withContext(Dispatchers.IO) {
-            try {
-                val videoBytes = context.contentResolver.openInputStream(videoUri)?.use {
-                    it.readBytes()
-                } ?: run {
-                    _events.emit(MediaViewerEvent.ShowToast(R.string.error_save_video))
-                    return@withContext
-                }
-
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, "ComfyMobile_${System.currentTimeMillis()}.mp4")
-                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/ComfyMobile")
-                }
-
-                val resolver = context.contentResolver
-                val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues)
-
-                uri?.let { outputUri ->
-                    resolver.openOutputStream(outputUri)?.use { outputStream ->
-                        outputStream.write(videoBytes)
-                    }
-                }
-
-                _events.emit(MediaViewerEvent.ShowToast(R.string.msg_video_saved_to_gallery))
-            } catch (e: Exception) {
-                _events.emit(MediaViewerEvent.ShowToast(R.string.error_save_video))
-            }
-        }
-    }
-
-    private suspend fun saveImageFromServer(context: Context, item: MediaViewerItem) {
-        val key = item.toCacheKey()
-
-        withContext(Dispatchers.IO) {
-            // Try cache first, then fetch if needed
-            val bitmap = MediaCache.getBitmap(key)
-                ?: MediaCache.fetchImage(key, item.subfolder, item.type)
-
-            if (bitmap == null) {
-                _events.emit(MediaViewerEvent.ShowToast(R.string.error_save_image))
-                return@withContext
-            }
-
-            try {
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, "ComfyMobile_${System.currentTimeMillis()}.png")
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ComfyMobile")
-                }
-
-                val resolver = context.contentResolver
-                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-
-                uri?.let { outputUri ->
-                    resolver.openOutputStream(outputUri)?.use { outputStream ->
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-                    }
-                }
-
-                _events.emit(MediaViewerEvent.ShowToast(R.string.msg_image_saved_to_gallery))
-            } catch (e: Exception) {
-                _events.emit(MediaViewerEvent.ShowToast(R.string.error_save_image))
-            }
-        }
-    }
-
-    private suspend fun saveVideoFromServer(context: Context, item: MediaViewerItem) {
-        val key = item.toCacheKey()
-
-        withContext(Dispatchers.IO) {
-            // Try cache first, then fetch if needed
-            val videoBytes = MediaCache.getVideoBytes(key)
-                ?: MediaCache.fetchVideoBytes(key, item.subfolder, item.type)
-
-            if (videoBytes == null) {
-                _events.emit(MediaViewerEvent.ShowToast(R.string.error_save_video))
-                return@withContext
-            }
-
-            try {
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, "ComfyMobile_${System.currentTimeMillis()}.mp4")
-                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/ComfyMobile")
-                }
-
-                val resolver = context.contentResolver
-                val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues)
-
-                uri?.let { outputUri ->
-                    resolver.openOutputStream(outputUri)?.use { outputStream ->
-                        outputStream.write(videoBytes)
-                    }
-                }
-
-                _events.emit(MediaViewerEvent.ShowToast(R.string.msg_video_saved_to_gallery))
-            } catch (e: Exception) {
-                _events.emit(MediaViewerEvent.ShowToast(R.string.error_save_video))
-            }
-        }
-    }
+    private fun readBytes(context: Context, uri: Uri): ByteArray? =
+        try { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } } catch (e: Exception) { null }
 
     fun shareCurrentItem() {
         val context = applicationContext ?: return
         val state = _uiState.value
+        val item = state.currentItem
+        if (!state.showsLocalMedia && item == null) return
+        val isVideo = state.showsVideo
 
         viewModelScope.launch {
-            if (state.mode == ViewerMode.SINGLE || state.currentItem?.isPreview == true) {
-                if (state.currentItem?.isVideo == true || state.currentVideoUri != null) {
-                    shareVideoFromUri(context, state.currentVideoUri)
-                } else {
-                    shareBitmap(context, state.currentBitmap)
-                }
-            } else {
-                val item = state.currentItem ?: return@launch
-                if (item.isVideo) {
-                    shareVideoFromServer(context, item)
-                } else {
-                    shareImageFromServer(context, item)
-                }
+            val uri = when {
+                // Already a file other apps can read
+                state.showsLocalMedia && isVideo -> state.currentVideoUri
+                state.showsLocalMedia -> state.currentBitmap?.let { MediaExport.imageShareUri(context, it) }
+                isVideo -> MediaExport.loadVideo(item!!.toCacheKey(), item.subfolder, item.type)
+                    ?.let { MediaExport.videoShareUri(context, it) }
+                else -> MediaExport.loadImage(item!!.toCacheKey(), item.subfolder, item.type)
+                    ?.let { MediaExport.imageShareUri(context, it) }
             }
-        }
-    }
-
-    private suspend fun shareBitmap(context: Context, bitmap: Bitmap?) {
-        if (bitmap == null) {
-            _events.emit(MediaViewerEvent.ShowToast(R.string.error_share_image))
-            return
-        }
-
-        withContext(Dispatchers.IO) {
             try {
-                val shareFile = File(context.cacheDir, "share_image.png")
-                shareFile.outputStream().use { outputStream ->
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-                }
-
-                val uri = FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.fileprovider",
-                    shareFile
-                )
-
-                withContext(Dispatchers.Main) {
-                    val shareIntent = Intent().apply {
-                        action = Intent.ACTION_SEND
-                        putExtra(Intent.EXTRA_STREAM, uri)
-                        type = "image/png"
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-
-                    context.startActivity(
-                        Intent.createChooser(shareIntent, context.getString(R.string.share_image))
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
-                }
-            } catch (e: Exception) {
-                _events.emit(MediaViewerEvent.ShowToast(R.string.error_share_image))
-            }
-        }
-    }
-
-    private suspend fun shareVideoFromUri(context: Context, videoUri: Uri?) {
-        if (videoUri == null) {
-            _events.emit(MediaViewerEvent.ShowToast(R.string.error_share_video))
-            return
-        }
-
-        withContext(Dispatchers.Main) {
-            try {
-                val shareIntent = Intent().apply {
-                    action = Intent.ACTION_SEND
-                    putExtra(Intent.EXTRA_STREAM, videoUri)
-                    type = "video/mp4"
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-
-                context.startActivity(
-                    Intent.createChooser(shareIntent, context.getString(R.string.share_video))
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                checkNotNull(uri)
+                MediaExport.share(
+                    context, listOf(uri),
+                    mimeType = if (isVideo) "video/mp4" else "image/png",
+                    title = context.getString(if (isVideo) R.string.share_video else R.string.share_image)
                 )
             } catch (e: Exception) {
-                _events.emit(MediaViewerEvent.ShowToast(R.string.error_share_video))
-            }
-        }
-    }
-
-    private suspend fun shareImageFromServer(context: Context, item: MediaViewerItem) {
-        val key = item.toCacheKey()
-
-        // Try cache first, then fetch if needed
-        val bitmap = MediaCache.getBitmap(key)
-            ?: MediaCache.fetchImage(key, item.subfolder, item.type)
-
-        if (bitmap == null) {
-            _events.emit(MediaViewerEvent.ShowToast(R.string.error_share_image))
-            return
-        }
-
-        shareBitmap(context, bitmap)
-    }
-
-    private suspend fun shareVideoFromServer(context: Context, item: MediaViewerItem) {
-        val key = item.toCacheKey()
-
-        // Try cache first, then fetch if needed
-        val videoBytes = MediaCache.getVideoBytes(key)
-            ?: MediaCache.fetchVideoBytes(key, item.subfolder, item.type)
-
-        if (videoBytes == null) {
-            _events.emit(MediaViewerEvent.ShowToast(R.string.error_share_video))
-            return
-        }
-
-        withContext(Dispatchers.IO) {
-            try {
-                val shareFile = File(context.cacheDir, "share_video.mp4")
-                shareFile.writeBytes(videoBytes)
-
-                val uri = FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.fileprovider",
-                    shareFile
-                )
-
-                withContext(Dispatchers.Main) {
-                    val shareIntent = Intent().apply {
-                        action = Intent.ACTION_SEND
-                        putExtra(Intent.EXTRA_STREAM, uri)
-                        type = "video/mp4"
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-
-                    context.startActivity(
-                        Intent.createChooser(shareIntent, context.getString(R.string.share_video))
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
-                }
-            } catch (e: Exception) {
-                _events.emit(MediaViewerEvent.ShowToast(R.string.error_share_video))
+                _events.emit(MediaViewerEvent.ShowToast(if (isVideo) R.string.error_share_video else R.string.error_share_image))
             }
         }
     }
