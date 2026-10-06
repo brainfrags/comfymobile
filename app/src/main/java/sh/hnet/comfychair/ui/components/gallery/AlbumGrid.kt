@@ -23,16 +23,23 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -55,7 +62,7 @@ import sh.hnet.comfychair.ui.components.rememberGalleryThumbnail
 
 /**
  * Album list: cover, name and item count per album, plus a "new album" tile.
- * Hold and drag an album to move it.
+ * Hold an album for its menu (rename, show/hide, delete); hold and drag it to move it.
  */
 @Composable
 fun AlbumGrid(
@@ -66,13 +73,18 @@ fun AlbumGrid(
     onOpen: (String) -> Unit,
     onNewAlbum: () -> Unit,
     onReorderStart: () -> Unit,
-    onMove: (fromId: String, toId: String) -> Unit
+    onMove: (fromId: String, toId: String) -> Unit,
+    onRename: (GalleryAlbum) -> Unit,
+    onToggleHidden: (GalleryAlbum) -> Unit,
+    onDelete: (GalleryAlbum) -> Unit
 ) {
     val haptics = LocalHapticFeedback.current
     val gridState = rememberLazyGridState()
     val drag = remember { ReorderDragState() }
     val reorderStart by rememberUpdatedState(onReorderStart)
     val move by rememberUpdatedState(onMove)
+    // Album whose menu is open (held and released without dragging)
+    var menuAlbumId by remember { mutableStateOf<String?>(null) }
 
     LazyVerticalGrid(
         columns = GridCells.Adaptive(150.dp),
@@ -85,17 +97,29 @@ fun AlbumGrid(
             .pointerInput(Unit) {
                 fun albumAt(pos: Offset) =
                     drag.keyAt(pos, gridState.layoutInfo.visibleItemsInfo.map { it.key })
+                // Held album, where it was held and how far the finger moved since
+                var heldId: String? = null
+                var heldAt = Offset.Zero
+                var moved = Offset.Zero
                 detectDragGesturesAfterLongPress(
                     onDragStart = { pos ->
-                        val id = albumAt(pos) ?: return@detectDragGesturesAfterLongPress
+                        heldId = albumAt(pos) ?: return@detectDragGesturesAfterLongPress
+                        heldAt = pos
+                        moved = Offset.Zero
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        reorderStart()
-                        drag.start(id, pos)
                     },
                     onDrag = { change, amount ->
-                        val from = drag.draggingKey ?: return@detectDragGesturesAfterLongPress
+                        val held = heldId ?: return@detectDragGesturesAfterLongPress
                         change.consume()
-                        drag.moveTo(drag.fingerPosition + amount)
+                        moved += amount
+                        // Dragging starts once the finger really moves; until then it's a hold (menu)
+                        if (drag.draggingKey == null) {
+                            if (moved.getDistance() < viewConfiguration.touchSlop) return@detectDragGesturesAfterLongPress
+                            reorderStart()
+                            drag.start(held, heldAt)
+                        }
+                        val from = drag.draggingKey ?: return@detectDragGesturesAfterLongPress
+                        drag.moveTo(heldAt + moved)
                         val target = albumAt(drag.fingerPosition)
                         if (target != null && target != from) {
                             // Keep the scroll position when the first visible album moves
@@ -106,21 +130,48 @@ fun AlbumGrid(
                             move(from, target)
                         }
                     },
-                    onDragEnd = { drag.end() },
-                    onDragCancel = { drag.end() }
+                    onDragEnd = {
+                        if (drag.draggingKey == null) menuAlbumId = heldId
+                        heldId = null
+                        drag.end()
+                    },
+                    onDragCancel = {
+                        heldId = null
+                        drag.end()
+                    }
                 )
             }
     ) {
         items(albums, key = { it.id }) { album ->
-            AlbumTile(
-                album = album,
-                count = counts[album.id] ?: 0,
-                cover = covers[album.id],
-                isHidden = album.id in hiddenIds,
-                modifier = drag.cellModifier(album.id, Modifier.animateItem())
-                    .clip(MaterialTheme.shapes.medium)
-                    .clickable { onOpen(album.id) }
-            )
+            val isHidden = album.id in hiddenIds
+            Box(modifier = drag.cellModifier(album.id, Modifier.animateItem())) {
+                AlbumTile(
+                    album = album,
+                    count = counts[album.id] ?: 0,
+                    cover = covers[album.id],
+                    isHidden = isHidden,
+                    modifier = Modifier
+                        .clip(MaterialTheme.shapes.medium)
+                        .clickable { onOpen(album.id) }
+                )
+                DropdownMenu(expanded = menuAlbumId == album.id, onDismissRequest = { menuAlbumId = null }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.workflow_menu_rename)) },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                        onClick = { menuAlbumId = null; onRename(album) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(if (isHidden) R.string.gallery_unhide_album else R.string.gallery_hide_album)) },
+                        leadingIcon = { Icon(if (isHidden) Icons.Default.Visibility else Icons.Default.VisibilityOff, contentDescription = null) },
+                        onClick = { menuAlbumId = null; onToggleHidden(album) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.button_delete), color = MaterialTheme.colorScheme.error) },
+                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                        onClick = { menuAlbumId = null; onDelete(album) }
+                    )
+                }
+            }
         }
         item(key = "new_album") {
             Column(

@@ -350,7 +350,7 @@ fun TextToImageScreen(
     // Album new images go into (shared with the gallery)
     LaunchedEffect(Unit) { AlbumRepository.ensureLoaded(context) }
     val albums by AlbumRepository.albums.collectAsState()
-    val currentAlbumId by AlbumRepository.currentAlbumId.collectAsState()
+    val currentAlbumId by AlbumRepository.targetAlbumId.collectAsState()
     val currentAlbum = albums.firstOrNull { it.id == currentAlbumId }
 
     // Which recent result is shown in the preview (null = latest generation)
@@ -480,7 +480,7 @@ fun TextToImageScreen(
         AlbumDropdown(
             albums = albums,
             selectedId = currentAlbumId,
-            onSelect = { AlbumRepository.select(it) }
+            onSelect = { AlbumRepository.selectTarget(it) }
         )
     }
 

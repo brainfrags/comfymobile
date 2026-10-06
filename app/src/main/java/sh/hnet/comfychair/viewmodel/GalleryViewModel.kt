@@ -108,13 +108,14 @@ class GalleryViewModel : ViewModel() {
         clearSelection()
         // Leaving an album (to Photos or the trash) deselects it, also for generation
         if (section != GallerySection.ALBUMS) AlbumRepository.select(null)
-        view.update { it.copy(section = section) }
+        view.update { it.copy(section = section, isMoveMode = false, movingKey = null) }
     }
 
     /** Open an album (null = back to the album list). Also selects it for generation. */
     fun selectAlbum(albumId: String?) {
         clearSelection()
         AlbumRepository.select(albumId)
+        view.update { it.copy(isMoveMode = false, movingKey = null) }
         if (albumId != null) view.update { it.copy(section = GallerySection.ALBUMS) }
     }
 
@@ -125,6 +126,8 @@ class GalleryViewModel : ViewModel() {
 
     /** Sort the items shown: in an open album only that album, else the gallery. */
     fun setSortOrder(order: GallerySortOrder) {
+        // Items can only be moved when sorted by date
+        if (!order.byDate) view.update { it.copy(isMoveMode = false, movingKey = null) }
         val album = uiState.value.selectedAlbum?.takeIf { uiState.value.isInAlbum }
         if (album != null) {
             AlbumRepository.setItemSort(album.id, order.name)
@@ -139,48 +142,78 @@ class GalleryViewModel : ViewModel() {
         appContext?.let { AppSettings.setAlbumSortOrder(it, order.name) }
     }
 
-    // Drag and drop ordering
+    // Move mode
 
-    /**
-     * Called when the user starts dragging an item. Switches to the custom order, starting
-     * from the order currently shown so nothing jumps.
-     */
-    fun beginReorder() {
-        val sort = uiState.value.sortOrder
-        if (sort == GallerySortOrder.CUSTOM) return
-        saveOrder(sort.apply(repository.galleryItems.value.distinctBy { it.key }).map { it.libraryId })
-        setSortOrder(GallerySortOrder.CUSTOM)
+    /** Turn move mode on/off. In move mode a tap picks an image and arrows on it move it. */
+    fun toggleMoveMode() {
+        view.update {
+            it.copy(isMoveMode = !it.isMoveMode, movingKey = null, selection = emptySet(), isSelectionMode = false)
+        }
+    }
+
+    /** Pick the image to move (tapping it again puts it down). */
+    fun pickForMove(key: String) {
+        view.update { it.copy(movingKey = if (it.movingKey == key) null else key) }
     }
 
     /**
-     * Move [fromKey] to where [toKey] is in the shown list. The order is kept for the
-     * whole gallery, so items keep their relative order in every view.
+     * Move the picked image one place earlier or later ([forward]) in the shown list. Next to an
+     * image of another day it first moves onto that day (its place in the list stays the same).
      */
-    fun moveItem(fromKey: String, toKey: String) {
+    fun moveStep(forward: Boolean) {
+        val state = uiState.value
+        val key = state.movingKey ?: return
+        if (!state.sortOrder.byDate) return
+        val shown = state.items
+        val index = shown.indexOfFirst { it.key == key }
+        val neighbourIndex = if (forward) index + 1 else index - 1
+        if (index < 0 || neighbourIndex !in shown.indices) return
+        val item = shown[index]
+        val neighbour = shown[neighbourIndex]
+        if (neighbour.timestamp <= 0) return
+        if (item.timestamp > 0 && sameDay(item.timestamp, neighbour.timestamp)) {
+            moveItem(key, neighbour.key)
+        } else {
+            val changes = datesForMove(shown.map { it.timestamp }, index, neighbourIndex, dateStep(state.sortOrder))
+            repository.setDates(changes.entries.associate { (i, time) -> shown[i].libraryId to time })
+        }
+    }
+
+    private fun sameDay(a: Long, b: Long): Boolean {
+        val zone = java.time.ZoneId.systemDefault()
+        fun day(t: Long) = java.time.Instant.ofEpochMilli(t).atZone(zone).toLocalDate()
+        return day(a) == day(b)
+    }
+
+    /** How the date changes going down the list */
+    private fun dateStep(order: GallerySortOrder) = if (order == GallerySortOrder.NEWEST) -1L else 1L
+
+    /**
+     * Move [fromKey] to where [toKey] is in the shown list (sorted by date) by giving it a new
+     * date between its new neighbours, on [toKey]'s day. The new date is kept in the app and
+     * wins over the server's, so the item stays there in every view.
+     */
+    private fun moveItem(fromKey: String, toKey: String) {
         if (fromKey == toKey) return
-        val shown = uiState.value.items
+        val state = uiState.value
+        if (!state.sortOrder.byDate) return
+        val shown = state.items
         val fromIndex = shown.indexOfFirst { it.key == fromKey }
         val toIndex = shown.indexOfFirst { it.key == toKey }
         if (fromIndex < 0 || toIndex < 0) return
+        // Nothing to put it next to on an item without a date
+        if (shown[toIndex].timestamp <= 0) return
 
-        val full = GallerySortOrder.applyCustomOrder(
-            repository.galleryItems.value.distinctBy { it.key },
-            repository.library.value.order
-        ).map { it.libraryId }.toMutableList()
-        val fromId = shown[fromIndex].libraryId
-        val toId = shown[toIndex].libraryId
-        full.remove(fromId)
-        val target = full.indexOf(toId)
-        if (target < 0) return
         // Moving down lands after the target, moving up lands before it
-        full.add(if (fromIndex < toIndex) target + 1 else target, fromId)
-        saveOrder(full)
-    }
+        val list = shown.toMutableList()
+        val moved = list.removeAt(fromIndex)
+        val targetPos = list.indexOfFirst { it.key == toKey }
+        val down = fromIndex < toIndex
+        val pos = if (down) targetPos + 1 else targetPos
+        list.add(pos, moved)
 
-    /** Save [order] for the gallery, keeping the saved position of items not in it (e.g. in the trash). */
-    private fun saveOrder(order: List<String>) {
-        val ids = order.toHashSet()
-        repository.setOrder(order + repository.library.value.order.filter { it !in ids })
+        val changes = datesForMove(list.map { it.timestamp }, pos, if (down) pos - 1 else pos + 1, dateStep(state.sortOrder))
+        repository.setDates(changes.entries.associate { (i, time) -> list[i].libraryId to time })
     }
 
     /** Dragging an album switches to the custom order, starting from the order shown. */

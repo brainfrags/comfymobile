@@ -1,7 +1,7 @@
 package sh.hnet.comfychair.ui.components.generate
 
 import androidx.compose.foundation.layout.offset
-import androidx.compose.material.icons.filled.PhotoAlbum
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import android.graphics.Bitmap
@@ -263,7 +263,7 @@ fun WorkflowSplitDropdown(
     }
 }
 
-/** Outlined pill to pick the album new images go into (null = none). */
+/** Outlined pill to pick the folder new images go into (null = none). */
 @Composable
 fun AlbumDropdown(
     albums: List<sh.hnet.comfychair.storage.GalleryAlbum>,
@@ -286,7 +286,7 @@ fun AlbumDropdown(
                 .padding(start = 12.dp, end = 8.dp)
         ) {
             Icon(
-                Icons.Default.PhotoAlbum, null, modifier = Modifier.size(18.dp),
+                Icons.Default.Folder, null, modifier = Modifier.size(18.dp),
                 tint = if (selected != null) Brand.BlueText else MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.width(6.dp))

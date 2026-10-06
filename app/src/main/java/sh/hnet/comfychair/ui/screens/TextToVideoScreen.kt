@@ -265,7 +265,7 @@ fun TextToVideoScreen(
     // Album new videos go into (shared with the other modes and the gallery)
     LaunchedEffect(Unit) { AlbumRepository.ensureLoaded(context) }
     val albums by AlbumRepository.albums.collectAsState()
-    val currentAlbumId by AlbumRepository.currentAlbumId.collectAsState()
+    val currentAlbumId by AlbumRepository.targetAlbumId.collectAsState()
     val currentAlbum = albums.firstOrNull { it.id == currentAlbumId }
 
     val progressVisible = isThisScreenExecuting && generationState.maxProgress > 0 && generationState.progress > 0
@@ -334,7 +334,7 @@ fun TextToVideoScreen(
             )
         },
         albumDropdown = {
-            AlbumDropdown(albums = albums, selectedId = currentAlbumId, onSelect = { AlbumRepository.select(it) })
+            AlbumDropdown(albums = albums, selectedId = currentAlbumId, onSelect = { AlbumRepository.selectTarget(it) })
         },
         serverMenu = {
             AppMenuDropdown(onSettings = onNavigateToSettings, onLogout = onLogout)

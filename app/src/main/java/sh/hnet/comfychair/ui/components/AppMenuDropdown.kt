@@ -1,6 +1,7 @@
 package sh.hnet.comfychair.ui.components
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -8,6 +9,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -28,13 +30,15 @@ import sh.hnet.comfychair.R
  * @param onLogout Logout action
  * @param navigateLabel Label for the first action (defaults to Settings)
  * @param navigateIcon Icon for the first action (defaults to Settings icon)
+ * @param extraItems Screen-specific items shown above the others; call `close` to close the menu
  */
 @Composable
 fun AppMenuDropdown(
     onNavigate: () -> Unit,
     onLogout: () -> Unit,
     navigateLabel: String = stringResource(R.string.action_settings),
-    navigateIcon: ImageVector = Icons.Default.Settings
+    navigateIcon: ImageVector = Icons.Default.Settings,
+    extraItems: (@Composable ColumnScope.(close: () -> Unit) -> Unit)? = null
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -46,6 +50,10 @@ fun AppMenuDropdown(
             expanded = showMenu,
             onDismissRequest = { showMenu = false }
         ) {
+            if (extraItems != null) {
+                extraItems { showMenu = false }
+                HorizontalDivider()
+            }
             DropdownMenuItem(
                 text = { Text(navigateLabel) },
                 onClick = {

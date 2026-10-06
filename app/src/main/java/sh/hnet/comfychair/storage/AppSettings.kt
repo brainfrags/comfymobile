@@ -246,6 +246,7 @@ object AppSettings {
     private const val KEY_GALLERY_SORT_ORDER = "gallery_sort_order"
     private const val KEY_SLIDESHOW_SECONDS = "slideshow_seconds"
     private const val KEY_CURRENT_ALBUM_PREFIX = "current_album_"
+    private const val KEY_LAST_ALBUM_PREFIX = "last_album_"
 
     /** Album selected for generation/gallery on a server, or null for none. */
     fun getCurrentAlbumId(context: Context, serverId: String): String? {
@@ -259,6 +260,22 @@ object AppSettings {
             .apply {
                 if (albumId == null) remove(KEY_CURRENT_ALBUM_PREFIX + serverId)
                 else putString(KEY_CURRENT_ALBUM_PREFIX + serverId, albumId)
+            }
+            .apply()
+    }
+
+    /** Folder last selected on a server (new images go there while none is selected), or null. */
+    fun getLastAlbumId(context: Context, serverId: String): String? {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_LAST_ALBUM_PREFIX + serverId, null)
+    }
+
+    fun setLastAlbumId(context: Context, serverId: String, albumId: String?) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .apply {
+                if (albumId == null) remove(KEY_LAST_ALBUM_PREFIX + serverId)
+                else putString(KEY_LAST_ALBUM_PREFIX + serverId, albumId)
             }
             .apply()
     }

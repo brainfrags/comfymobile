@@ -1,19 +1,24 @@
 package sh.hnet.comfychair.ui.components.gallery
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -26,17 +31,19 @@ import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -50,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -72,7 +80,8 @@ import androidx.compose.foundation.lazy.staggeredgrid.items as staggeredItems
 
 /**
  * The gallery's items, grouped by day, in the chosen view mode, with pull to refresh.
- * Taps, long presses, drag-to-select and drag-to-move are handled at grid level
+ * Taps, long presses and drag-to-select are handled at grid level; in move mode the picked
+ * image gets arrows that move it one place
  * (see [gallerySelectGestures]).
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -83,8 +92,8 @@ fun GalleryGrid(
     onOpen: (key: String) -> Unit,
     onToggleSelection: (GalleryItem) -> Unit,
     onSelectionChange: (Set<String>) -> Unit,
-    onReorderStart: () -> Unit,
-    onMove: (fromKey: String, toKey: String) -> Unit,
+    onPick: (key: String) -> Unit,
+    onMoveStep: (forward: Boolean) -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -103,12 +112,11 @@ fun GalleryGrid(
     val items by rememberUpdatedState(uiState.items)
     val selection by rememberUpdatedState(uiState.selectedItems)
     val isSelectionMode by rememberUpdatedState(uiState.isSelectionMode)
-    val canReorder by rememberUpdatedState(uiState.canReorder)
+    val isMoveMode by rememberUpdatedState(uiState.isMoveMode)
     val open by rememberUpdatedState(onOpen)
     val toggleSelection by rememberUpdatedState(onToggleSelection)
     val changeSelection by rememberUpdatedState(onSelectionChange)
-    val reorderStart by rememberUpdatedState(onReorderStart)
-    val move by rememberUpdatedState(onMove)
+    val pick by rememberUpdatedState(onPick)
 
     // Remembered so the gesture coroutine is not restarted on every recomposition
     val selectGestures = remember(gridState) {
@@ -121,34 +129,22 @@ fun GalleryGrid(
             keys = { items.map { it.key } },
             selection = { selection },
             isSelectionMode = { isSelectionMode },
-            canReorder = { canReorder },
+            isMoveMode = { isMoveMode },
             onTap = { key ->
                 val item = items.firstOrNull { it.key == key }
                 if (item != null) {
-                    if (isSelectionMode) toggleSelection(item) else open(key)
+                    when {
+                        isMoveMode -> pick(key)
+                        isSelectionMode -> toggleSelection(item)
+                        else -> open(key)
+                    }
                 }
             },
-            onSelectionChange = { changeSelection(it) },
-            onReorderStart = { key, pos ->
-                // Dragging switches to the custom order (day headers go away)
-                reorderStart()
-                drag.start(key, pos)
-            },
-            onReorderMove = move@{ pos ->
-                drag.moveTo(pos)
-                val from = drag.draggingKey ?: return@move
-                val target = keyAt(pos) ?: return@move
-                if (target == from) return@move
-                // Moving the first visible item would make the grid follow it; keep the scroll position
-                val first = gridState.visibleKeys().firstOrNull()
-                if (first == from || first == target) gridState.keepScrollPosition()
-                move(from, target)
-            },
-            onReorderEnd = { drag.end() }
+            onSelectionChange = { changeSelection(it) }
         )
     }
 
-    // Auto-scroll while drag-selecting or moving an item near the top/bottom edge
+    // Auto-scroll while drag-selecting near the top/bottom edge
     LaunchedEffect(dragSelectState.autoScrollSpeed) {
         val speed = dragSelectState.autoScrollSpeed
         if (speed != 0f) {
@@ -167,9 +163,31 @@ fun GalleryGrid(
 
     GalleryPrefetch(uiState.items, gridState, columns)
 
-    // Items split into days (one group without a header when sorted by name/type)
-    val dateGroups = remember(uiState.items, uiState.sortOrder) {
-        groupByDay(uiState.items, byDate = uiState.sortOrder.byDate)
+    // Items split into days (one group without a header when sorted by name/type, and in the
+    // trash: it is ordered by when items were deleted, not by date)
+    val dateGroups = remember(uiState.items, uiState.sortOrder, uiState.section) {
+        groupByDay(uiState.items, byDate = uiState.sortOrder.byDate && uiState.section != GallerySection.TRASH)
+    }
+    // Keep the image being moved on screen
+    LaunchedEffect(uiState.movingKey, dateGroups) {
+        val key = uiState.movingKey ?: return@LaunchedEffect
+        if (key in gridState.visibleKeys()) return@LaunchedEffect
+        // Index in the grid: each day's header, then its items
+        var index = 0
+        for (group in dateGroups) {
+            index++
+            val i = group.items.indexOfFirst { it.key == key }
+            if (i >= 0) {
+                gridState.scrollToItem(index + i)
+                break
+            }
+            index += group.items.size
+        }
+    }
+
+    // Where the image picked in move mode is, for its arrows
+    val movingIndex = remember(uiState.items, uiState.movingKey) {
+        uiState.movingKey?.let { key -> uiState.items.indexOfFirst { it.key == key } } ?: -1
     }
     val showPlaceholder = uiState.items.isEmpty()
     val emptyMessage = when {
@@ -178,7 +196,7 @@ fun GalleryGrid(
         else -> R.string.msg_gallery_empty
     }
 
-    // One grid cell; [placement] animates moves (not for the item being dragged)
+    // One grid cell; [placement] animates moves
     @Composable
     fun Cell(item: GalleryItem, placement: Modifier) {
         GalleryItemCard(
@@ -186,13 +204,21 @@ fun GalleryGrid(
             isSelected = item.key in uiState.selectedItems,
             isOfflineMode = isOfflineMode,
             square = viewMode.square,
-            modifier = drag.cellModifier(item.key, placement, draggedAlpha = 0.9f)
+            moveControls = if (item.key == uiState.movingKey && movingIndex >= 0) {
+                MoveControls(
+                    canEarlier = movingIndex > 0,
+                    canLater = movingIndex < uiState.items.lastIndex,
+                    onStep = onMoveStep
+                )
+            } else null,
+            modifier = drag.cellModifier(item.key, placement)
         )
     }
 
     @Composable
     fun Header(group: DateGroup) {
-        DateGroupHeader(group, uiState.selectedItems, onSelectionChange)
+        // No selecting in move mode
+        DateGroupHeader(group, uiState.selectedItems, onSelectionChange.takeUnless { uiState.isMoveMode })
     }
 
     PullToRefreshBox(
@@ -215,7 +241,7 @@ fun GalleryGrid(
                         item(span = StaggeredGridItemSpan.FullLine) { GalleryPlaceholder(uiState.isLoading, emptyMessage) }
                     } else {
                         dateGroups.forEach { group ->
-                            item(key = "header_${group.day}", span = StaggeredGridItemSpan.FullLine) { Header(group) }
+                            item(key = group.key, span = StaggeredGridItemSpan.FullLine) { Header(group) }
                             staggeredItems(group.items, key = { it.key }) { item -> Cell(item, Modifier.animateItem()) }
                         }
                     }
@@ -234,7 +260,7 @@ fun GalleryGrid(
                         item(span = { GridItemSpan(maxLineSpan) }) { GalleryPlaceholder(uiState.isLoading, emptyMessage) }
                     } else {
                         dateGroups.forEach { group ->
-                            item(key = "header_${group.day}", span = { GridItemSpan(maxLineSpan) }) { Header(group) }
+                            item(key = group.key, span = { GridItemSpan(maxLineSpan) }) { Header(group) }
                             gridItems(group.items, key = { it.key }) { item -> Cell(item, Modifier.animateItem()) }
                         }
                     }
@@ -265,6 +291,10 @@ private class GalleryGridState(
 
     suspend fun scrollBy(pixels: Float) {
         if (masonry) staggered.scrollBy(pixels) else grid.scrollBy(pixels)
+    }
+
+    suspend fun scrollToItem(index: Int) {
+        if (masonry) staggered.scrollToItem(index) else grid.scrollToItem(index)
     }
 
     suspend fun scrollToTop() {
@@ -350,8 +380,11 @@ private fun GalleryPlaceholder(isLoading: Boolean, emptyMessage: Int) {
     }
 }
 
-/** Items generated on the same day. [day] = epoch day, or null for no header. */
-private class DateGroup(val day: Long?, val items: List<GalleryItem>)
+/**
+ * Items generated on the same day. [day] = epoch day, or null for no header.
+ * [key] = unique grid key of the header (a day can come back if the items are not in date order).
+ */
+private class DateGroup(val day: Long?, val items: List<GalleryItem>, val key: String = "header_$day")
 
 private const val UNKNOWN_DAY = Long.MIN_VALUE
 
@@ -374,7 +407,13 @@ private fun groupByDay(items: List<GalleryItem>, byDate: Boolean): List<DateGrou
         current += item
     }
     groups += DateGroup(currentDay, current)
-    return groups
+    // Grid keys must be unique, or the grid crashes
+    val seen = HashMap<Long?, Int>()
+    return groups.map { g ->
+        val n = (seen[g.day] ?: 0) + 1
+        seen[g.day] = n
+        if (n == 1) g else DateGroup(g.day, g.items, "header_${g.day}_$n")
+    }
 }
 
 /**
@@ -385,7 +424,8 @@ private fun groupByDay(items: List<GalleryItem>, byDate: Boolean): List<DateGrou
 private fun DateGroupHeader(
     group: DateGroup,
     selected: Set<String>,
-    onSelectionChange: (Set<String>) -> Unit
+    /** null = no select-all button */
+    onSelectionChange: ((Set<String>) -> Unit)?
 ) {
     val day = group.day ?: return
     val label = when (day) {
@@ -418,9 +458,49 @@ private fun DateGroupHeader(
             style = MaterialTheme.typography.titleSmall,
             modifier = Modifier.weight(1f)
         )
-        TextButton(onClick = { onSelectionChange(if (allSelected) selected - keys.toSet() else selected + keys) }) {
-            Text(stringResource(if (allSelected) R.string.gallery_deselect_all else R.string.gallery_select_all))
+        if (onSelectionChange != null) {
+            SelectDayChip(allSelected) {
+                onSelectionChange(if (allSelected) selected - keys.toSet() else selected + keys)
+            }
+        } else {
+            // Same height as the chip, so the grid doesn't shift
+            Spacer(Modifier.height(SELECT_CHIP_HEIGHT))
         }
+    }
+}
+
+private val SELECT_CHIP_HEIGHT = 32.dp
+
+/**
+ * Select / deselect a day's items: a pill with a round check, filled once the whole day
+ * is selected (like the checks on the thumbnails).
+ */
+@Composable
+private fun SelectDayChip(allSelected: Boolean, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val background by animateColorAsState(if (allSelected) colors.primary else colors.surfaceContainerHigh, label = "chipBg")
+    val content by animateColorAsState(if (allSelected) colors.onPrimary else colors.onSurfaceVariant, label = "chipFg")
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .height(SELECT_CHIP_HEIGHT)
+            .clip(CircleShape)
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(start = 8.dp, end = 12.dp)
+    ) {
+        Icon(
+            if (allSelected) Icons.Default.CheckCircle else Icons.Outlined.Circle,
+            contentDescription = null,
+            tint = content,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            stringResource(if (allSelected) R.string.gallery_deselect_all else R.string.gallery_select_all),
+            style = MaterialTheme.typography.labelLarge,
+            color = content
+        )
     }
 }
 
@@ -434,6 +514,7 @@ private fun GalleryItemCard(
     isSelected: Boolean,
     isOfflineMode: Boolean,
     square: Boolean,
+    moveControls: MoveControls? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -451,7 +532,7 @@ private fun GalleryItemCard(
             .fillMaxWidth()
             .aspectRatio(aspect)
             .then(
-                if (isSelected) {
+                if (isSelected || moveControls != null) {
                     Modifier.border(
                         width = 3.dp,
                         color = MaterialTheme.colorScheme.primary,
@@ -530,6 +611,20 @@ private fun GalleryItemCard(
                 }
             }
 
+            // Move mode: arrows on the picked image
+            moveControls?.let { controls ->
+                if (controls.canEarlier) {
+                    MoveArrow(Icons.AutoMirrored.Filled.KeyboardArrowLeft, R.string.gallery_move_earlier, Modifier.align(Alignment.CenterStart)) {
+                        controls.onStep(false)
+                    }
+                }
+                if (controls.canLater) {
+                    MoveArrow(Icons.AutoMirrored.Filled.KeyboardArrowRight, R.string.gallery_move_later, Modifier.align(Alignment.CenterEnd)) {
+                        controls.onStep(true)
+                    }
+                }
+            }
+
             // Video indicator (only show when not selected and not loading)
             if (item.isVideo && !isSelected && bitmap != null) {
                 Box(
@@ -548,5 +643,23 @@ private fun GalleryItemCard(
                 }
             }
         }
+    }
+}
+
+/** Arrows on the image picked in move mode: one place earlier / later in the list. */
+private class MoveControls(val canEarlier: Boolean, val canLater: Boolean, val onStep: (forward: Boolean) -> Unit)
+
+@Composable
+private fun MoveArrow(icon: ImageVector, label: Int, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .padding(4.dp)
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = stringResource(label), tint = Color.White, modifier = Modifier.size(28.dp))
     }
 }

@@ -11,7 +11,8 @@ import java.io.File
  * Per-server gallery organisation that is not an album:
  * - trash: items deleted by the user (file id -> time moved to trash)
  * - purged: items deleted from the trash; hidden for good
- * - order: custom item order set by drag and drop (file ids, first = top)
+ * - dates: dates set by dragging an item to another place (file id -> ms since epoch);
+ *   they win over the server's date
  * - moves: files the app moved into another output folder (original file id -> new path
  *   relative to the output folder), so history items still find their file
  * - folders: album folders created in the app (shown even while empty)
@@ -29,7 +30,7 @@ import java.io.File
 data class GalleryLibrary(
     val trash: Map<String, Long> = emptyMap(),
     val purged: Set<String> = emptySet(),
-    val order: List<String> = emptyList(),
+    val dates: Map<String, Long> = emptyMap(),
     val moves: Map<String, String> = emptyMap(),
     val folders: Set<String> = emptySet(),
     val pendingMoves: Map<String, String> = emptyMap(),
@@ -55,8 +56,8 @@ object GalleryLibraryStore {
             o.optJSONObject("trash")?.let { t -> t.keys().forEach { k -> trash[k] = t.optLong(k) } }
             val purged = o.optJSONArray("purged")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() }
                 ?: emptySet()
-            val order = o.optJSONArray("order")?.let { a -> (0 until a.length()).map { a.getString(it) } }
-                ?: emptyList()
+            val dates = mutableMapOf<String, Long>()
+            o.optJSONObject("dates")?.let { m -> m.keys().forEach { k -> dates[k] = m.optLong(k) } }
             val moves = mutableMapOf<String, String>()
             o.optJSONObject("moves")?.let { m -> m.keys().forEach { k -> moves[k] = m.optString(k) } }
             val folders = o.optJSONArray("folders")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() }
@@ -71,7 +72,7 @@ object GalleryLibraryStore {
                 ?: emptySet()
             val albumSorts = mutableMapOf<String, String>()
             o.optJSONObject("albumSorts")?.let { m -> m.keys().forEach { k -> albumSorts[k] = m.optString(k) } }
-            GalleryLibrary(trash, purged, order, moves, folders, pendingMoves, covers, albumOrder, hiddenAlbums, albumSorts)
+            GalleryLibrary(trash, purged, dates, moves, folders, pendingMoves, covers, albumOrder, hiddenAlbums, albumSorts)
         } catch (e: Exception) {
             DebugLogger.e(TAG, "Failed to load library: ${e.message}")
             GalleryLibrary()
@@ -83,7 +84,7 @@ object GalleryLibraryStore {
             val o = JSONObject().apply {
                 put("trash", JSONObject().apply { library.trash.forEach { (k, v) -> put(k, v) } })
                 put("purged", JSONArray(library.purged.toList()))
-                put("order", JSONArray(library.order))
+                put("dates", JSONObject().apply { library.dates.forEach { (k, v) -> put(k, v) } })
                 put("moves", JSONObject().apply { library.moves.forEach { (k, v) -> put(k, v) } })
                 put("folders", JSONArray(library.folders.toList()))
                 put("pendingMoves", JSONObject().apply { library.pendingMoves.forEach { (k, v) -> put(k, v) } })

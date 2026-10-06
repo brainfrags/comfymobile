@@ -6,6 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,6 +23,7 @@ import sh.hnet.comfychair.gallery.GalleryItem
 import sh.hnet.comfychair.gallery.HistoryParser
 import sh.hnet.comfychair.gallery.LegacyLibraryIds
 import sh.hnet.comfychair.storage.AppSettings
+import sh.hnet.comfychair.storage.FileTimeStore
 import sh.hnet.comfychair.storage.GalleryLibrary
 import sh.hnet.comfychair.storage.GalleryLibraryStore
 import sh.hnet.comfychair.storage.GalleryMetadataCache
@@ -39,6 +42,8 @@ class GalleryRepository private constructor() {
     companion object {
         private const val TAG = "GalleryRepo"
         private const val PERIODIC_REFRESH_INTERVAL_MS = 5 * 60 * 1000L // 5 minutes
+        /** Files whose date is asked from the server at the same time */
+        private const val FILE_TIME_BATCH = 8
 
         @Volatile
         private var instance: GalleryRepository? = null
@@ -84,7 +89,7 @@ class GalleryRepository private constructor() {
     // at their new place, so this is not kept (their old path may be reused by a new image)
     private val recentFileMoves = HashMap<String, String>()
 
-    // Trash / purged / custom order / moves / album folders for the current server
+    // Trash / purged / dates set by dragging / moves / album folders for the current server
     private val _library = MutableStateFlow(GalleryLibrary())
     val library: StateFlow<GalleryLibrary> = _library.asStateFlow()
     private var libraryServerId: String? = null
@@ -114,6 +119,10 @@ class GalleryRepository private constructor() {
     private val isBusy: Boolean
         get() = _isLoading.value || _isRefreshing.value
 
+    /** A refresh was asked for while a load was running: load again when it ends */
+    @Volatile
+    private var refreshAgain = false
+
     // Track if initial load has been done
     private var hasLoadedOnce = false
 
@@ -134,6 +143,11 @@ class GalleryRepository private constructor() {
 
     private var periodicRefreshJob: Job? = null
     private var localSyncJob: Job? = null
+    private var fileTimeJob: Job? = null
+
+    // File dates read from the server (see FileTimeStore), for [fileTimeServerId]; with stateLock
+    private var savedFileTimes: MutableMap<String, Long> = HashMap()
+    private var fileTimeServerId: String? = null
     private var serverSyncJob: Job? = null
 
     /**
@@ -195,7 +209,10 @@ class GalleryRepository private constructor() {
      */
     fun refresh() {
         if (isBusy) {
-            DebugLogger.d(TAG, "Refresh skipped - already in progress (loading=${_isLoading.value}, refreshing=${_isRefreshing.value})")
+            // The running load may have fetched the history before this request's change
+            // (e.g. a job that just finished): load again once it is done
+            DebugLogger.d(TAG, "Refresh queued - already in progress (loading=${_isLoading.value}, refreshing=${_isRefreshing.value})")
+            refreshAgain = true
             return
         }
         if (comfyUIClient == null) {
@@ -232,8 +249,15 @@ class GalleryRepository private constructor() {
             LegacyLibraryIds.migrate(_library.value, historyItems, listing?.files, listing?.fileOps == true)
                 ?.let { migrated -> updateLibrary { migrated } }
             val library = _library.value
-            // File dates (extension), for items the history reports no time for
-            val fileTimes = listing?.times.orEmpty()
+            // File dates (extension, else read from the server before), for items the
+            // history reports no time for
+            val savedTimes = if (context != null && serverId != null) synchronized(stateLock) {
+                val saved = savedFileTimes(context, serverId)
+                // A file that is gone may come back under the same name with another date
+                listing?.files?.toHashSet()?.let { listed -> saved.keys.retainAll(listed) }
+                saved.filterValues { it > 0 }
+            } else emptyMap()
+            val fileTimes = savedTimes + listing?.times.orEmpty()
             fun GalleryItem.withFileTime(): GalleryItem =
                 if (timestamp > 0 || type != "output") this else fileTimes[path]?.let { copy(timestamp = it) } ?: this
 
@@ -270,6 +294,7 @@ class GalleryRepository private constructor() {
             val previousCount = _galleryItems.value.size
             setAllItems(items)
             hasLoadedOnce = true
+            if (context != null && serverId != null) startFileTimeFetch(context, serverId, client)
             DebugLogger.d(TAG, "Gallery refresh complete: ${items.size} items (was $previousCount)")
 
             // Cache gallery metadata for offline mode
@@ -284,6 +309,10 @@ class GalleryRepository private constructor() {
             return false
         } finally {
             busy.value = false
+            if (refreshAgain) {
+                refreshAgain = false
+                refresh()
+            }
         }
     }
 
@@ -316,6 +345,56 @@ class GalleryRepository private constructor() {
                 LocalGalleryStore.syncDownloads(context, serverId, client)
             } catch (e: Exception) {
                 DebugLogger.w(TAG, "Local sync failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Saved file dates of [serverId] (loaded when the server changes). Call with [stateLock] held. */
+    private fun savedFileTimes(context: Context, serverId: String): MutableMap<String, Long> {
+        if (fileTimeServerId != serverId) {
+            fileTimeServerId = serverId
+            savedFileTimes = FileTimeStore.load(context, serverId)
+        }
+        return savedFileTimes
+    }
+
+    /**
+     * Read the dates of output files that have none (not in the history, and no date in the
+     * listing: no ComfyMobile extension) from the server's Last-Modified header, a few at a
+     * time. Items get their date as results come in; dates are saved, so each file is asked once.
+     */
+    private fun startFileTimeFetch(context: Context, serverId: String, client: ComfyUIClient) {
+        if (fileTimeJob?.isActive == true) return
+        val missing = synchronized(stateLock) {
+            val saved = savedFileTimes(context, serverId)
+            allItems.filter { it.timestamp <= 0 && it.type == "output" && it.path !in saved }
+                .map { it.path }.distinct()
+        }
+        if (missing.isEmpty()) return
+        fileTimeJob = scope.launch(Dispatchers.IO) {
+            DebugLogger.d(TAG, "Reading dates of ${missing.size} files from the server")
+            for (chunk in missing.chunked(FILE_TIME_BATCH)) {
+                val results = chunk.map { path ->
+                    async { path to client.fetchFileTime(path.substringAfterLast('/'), path.substringBeforeLast('/', "")) }
+                }.awaitAll()
+                val found = results.mapNotNull { (path, time) -> time?.let { path to it } }.toMap()
+                // Server not reachable: try again on the next refresh
+                if (found.isEmpty()) break
+                val toSave = synchronized(stateLock) {
+                    if (fileTimeServerId != serverId) return@launch
+                    savedFileTimes.putAll(found)
+                    val dated = found.filterValues { it > 0 }
+                    if (dated.isNotEmpty()) {
+                        val moves = _library.value.moves
+                        rawItems = rawItems.map { item ->
+                            if (item.timestamp > 0 || item.type != "output") item
+                            else dated[applyMove(item, moves).path]?.let { item.copy(timestamp = it) } ?: item
+                        }.sortedByDescending { it.timestamp }
+                        publish()
+                    }
+                    savedFileTimes.toMap()
+                }
+                FileTimeStore.save(context, serverId, toSave)
             }
         }
     }
@@ -371,8 +450,8 @@ class GalleryRepository private constructor() {
     }
 
     /**
-     * Apply moves, purges and the trash to the loaded items, and split them into gallery
-     * and trash. Call with [stateLock] held.
+     * Apply moves, purges, dates set by dragging and the trash to the loaded items, and split
+     * them into gallery and trash. Call with [stateLock] held.
      */
     private fun publish() {
         val library = _library.value
@@ -383,6 +462,12 @@ class GalleryRepository private constructor() {
             .map { applyMove(it, library.moves) }
             .distinctBy { it.fileId }
             .filter { it.libraryId !in library.purged }
+            .let { items ->
+                val dates = library.dates
+                if (dates.isEmpty()) items
+                else items.map { item -> dates[item.libraryId]?.let { item.copy(timestamp = it) } ?: item }
+                    .sortedByDescending { it.timestamp }
+            }
         // In the trash: marked in the app, or in the trash folder on the PC
         val (trashed, visible) = allItems.partition { it.libraryId in trash || it.isInTrashFolder }
         _galleryItems.value = visible
@@ -492,9 +577,10 @@ class GalleryRepository private constructor() {
         }
     }
 
-    /** Save a custom item order (library ids, top first). */
-    fun setOrder(order: List<String>) {
-        updateLibrary { lib -> lib.copy(order = order) }
+    /** Give items a new date (library id -> ms since epoch), e.g. after dragging one to another place. */
+    fun setDates(dates: Map<String, Long>) {
+        if (dates.isEmpty()) return
+        updateLibrary { lib -> lib.copy(dates = lib.dates + dates) }
     }
 
     /**
@@ -506,7 +592,7 @@ class GalleryRepository private constructor() {
         if (items.isEmpty()) return
         val ids = items.mapTo(HashSet()) { it.libraryId }
         updateLibrary { lib ->
-            lib.copy(trash = lib.trash - ids, purged = lib.purged + ids, order = lib.order - ids)
+            lib.copy(trash = lib.trash - ids, purged = lib.purged + ids, dates = lib.dates - ids)
         }
         val remainingPrompts = synchronized(stateLock) { allItems.mapTo(HashSet()) { it.promptId } }
 
@@ -715,6 +801,8 @@ class GalleryRepository private constructor() {
         periodicRefreshJob = null
         localSyncJob?.cancel()
         localSyncJob = null
+        fileTimeJob?.cancel()
+        fileTimeJob = null
         // Clear media cache (preserves disk cache for offline mode)
         MediaCache.reset()
     }

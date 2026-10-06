@@ -67,6 +67,17 @@ object AlbumRepository {
     private val _currentAlbumId = MutableStateFlow<String?>(null)
     val currentAlbumId: StateFlow<String?> = _currentAlbumId.asStateFlow()
 
+    /**
+     * Album selected last. Kept when the gallery leaves the album (back to Photos), so new
+     * images still go there; only choosing "no folder" on a generation screen clears it.
+     */
+    private val _lastAlbumId = MutableStateFlow<String?>(null)
+
+    /** Album new images go into: the selected one, else the one selected last (null = none). */
+    val targetAlbumId: StateFlow<String?> = combine(_currentAlbumId, _lastAlbumId, albums) { current, last, all ->
+        current ?: last?.takeIf { id -> all.any { it.id == id } }
+    }.stateIn(scope, SharingStarted.Eagerly, null)
+
     private var appContext: Context? = null
     private var serverId: String? = null
 
@@ -108,14 +119,33 @@ object AlbumRepository {
         // Folder albums are only known once the gallery has loaded, so keep a folder selection as is
         _currentAlbumId.value = AppSettings.getCurrentAlbumId(ctx, id)
             ?.takeIf { a -> isFolder(a) || loaded.any { it.id == a } }
+        _lastAlbumId.value = (AppSettings.getLastAlbumId(ctx, id) ?: _currentAlbumId.value)
+            ?.takeIf { a -> isFolder(a) || loaded.any { it.id == a } }
     }
 
     fun select(albumId: String?) {
         val id = albumId?.takeIf { a -> isFolder(a) || _localAlbums.value.any { it.id == a } }
         _currentAlbumId.value = id
+        if (id != null) setLast(id)
         val ctx = appContext ?: return
         val server = serverId ?: return
         AppSettings.setCurrentAlbumId(ctx, server, id)
+    }
+
+    /**
+     * Choose where new images go (generation screens). Unlike [select], choosing none also
+     * forgets the last album, so new images stay out of every album.
+     */
+    fun selectTarget(albumId: String?) {
+        select(albumId)
+        if (albumId == null) setLast(null)
+    }
+
+    private fun setLast(albumId: String?) {
+        _lastAlbumId.value = albumId
+        val ctx = appContext ?: return
+        val server = serverId ?: return
+        AppSettings.setLastAlbumId(ctx, server, albumId)
     }
 
     /** Change the app-only albums (folder albums change by moving files). */
@@ -125,6 +155,8 @@ object AlbumRepository {
         }
         val current = _currentAlbumId.value
         if (current != null && !isFolder(current) && albums.none { it.id == current }) select(null)
+        val last = _lastAlbumId.value
+        if (last != null && !isFolder(last) && albums.none { it.id == last }) setLast(null)
         val ctx = appContext ?: return
         val server = serverId ?: return
         scope.launch(Dispatchers.IO) { GalleryAlbumStore.save(ctx, server, albums) }
@@ -179,6 +211,7 @@ object AlbumRepository {
         if (newFolder.isEmpty() || newFolder == oldFolder) return null
         val newId = folderAlbumId(newFolder)
         if (_currentAlbumId.value == albumId) select(newId)
+        if (_lastAlbumId.value == albumId) setLast(newId)
         // Keep its place in a custom order, its cover, sort and whether it is hidden
         gallery.updateLibrary { lib -> lib.withAlbumIdChanged(albumId, newId) }
         return moveFolder(oldFolder, newFolder)
@@ -197,6 +230,7 @@ object AlbumRepository {
         }
         val folder = folderOf(albumId)
         if (_currentAlbumId.value == albumId) select(null)
+        if (_lastAlbumId.value == albumId) setLast(null)
         return moveFolder(folder, folder.substringBeforeLast('/', ""))
     }
 
@@ -258,11 +292,12 @@ object AlbumRepository {
     // New images
 
     /**
-     * Put everything a prompt generates into the selected album (if any). For a folder album
+     * Put everything a prompt generates into the selected album, else the one selected last
+     * ([targetAlbumId]; none if the user chose no folder). For a folder album
      * the files are moved into its folder once the gallery sees them ([processPendingMoves]).
      */
     fun addPromptToCurrent(promptId: String) {
-        val albumId = _currentAlbumId.value ?: return
+        val albumId = targetAlbumId.value ?: return
         if (isFolder(albumId)) {
             gallery.updateLibrary { lib -> lib.copy(pendingMoves = lib.pendingMoves + (promptId to folderOf(albumId))) }
             return
@@ -365,7 +400,7 @@ object AlbumRepository {
      */
     private suspend fun convertLocalAlbumsToFolders() {
         for (album in _localAlbums.value) {
-            val folder = folderName(album.name).ifEmpty { "Album" }
+            val folder = folderName(album.name).ifEmpty { "Folder" }
             val members = gallery.galleryItems.value.filter { album.contains(it.promptId, it.key) }
             createFolder(folder)
             if (gallery.moveToFolder(members, folder) > 0) continue

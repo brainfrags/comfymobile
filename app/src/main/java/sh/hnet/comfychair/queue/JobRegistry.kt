@@ -185,9 +185,12 @@ object JobRegistry {
      * Clears the executing state and removes the job from tracking.
      *
      * @param promptId The prompt ID from the executing event
+     * @param refreshGallery Refresh the gallery. False for "execution_success": ComfyUI sends
+     *   it before the prompt is in /history, so the new files would be listed without their
+     *   date and generation info ("executing" with node=null comes after and refreshes).
      */
     @Synchronized
-    fun markCompleted(promptId: String) {
+    fun markCompleted(promptId: String, refreshGallery: Boolean = true) {
         val currentState = _queueState.value
         val job = currentState.ownJobs[promptId]
 
@@ -213,6 +216,7 @@ object JobRegistry {
 
         // Trigger gallery refresh - single source of truth for completion-triggered refreshes
         // Handles both in-app jobs and external jobs (from other clients)
+        if (!refreshGallery) return
         DebugLogger.d(TAG, "Triggering gallery refresh for job completion")
         GalleryRepository.getInstance().refresh()
     }

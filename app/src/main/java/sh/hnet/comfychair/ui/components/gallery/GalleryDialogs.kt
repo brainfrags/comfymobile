@@ -118,6 +118,28 @@ fun AlbumNameDialog(
     )
 }
 
+/** Confirm deleting an album (folder); its items are not deleted. */
+@Composable
+fun DeleteAlbumDialog(
+    albumName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${stringResource(R.string.gallery_delete_album)}: $albumName") },
+        text = { Text(stringResource(R.string.gallery_delete_album_note)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.button_delete), color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.button_cancel)) }
+        }
+    )
+}
+
 /**
  * Dialog for adding selected items to an existing album or a new one.
  */

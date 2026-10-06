@@ -275,7 +275,7 @@ fun ImageToImageScreen(
     // Album new images go into (shared with Text to Image and the gallery)
     LaunchedEffect(Unit) { AlbumRepository.ensureLoaded(context) }
     val albums by AlbumRepository.albums.collectAsState()
-    val currentAlbumId by AlbumRepository.currentAlbumId.collectAsState()
+    val currentAlbumId by AlbumRepository.targetAlbumId.collectAsState()
     val currentAlbum = albums.firstOrNull { it.id == currentAlbumId }
 
     val isEditing = uiState.mode == ImageToImageMode.EDITING
@@ -388,7 +388,7 @@ fun ImageToImageScreen(
             )
         },
         albumDropdown = {
-            AlbumDropdown(albums = albums, selectedId = currentAlbumId, onSelect = { AlbumRepository.select(it) })
+            AlbumDropdown(albums = albums, selectedId = currentAlbumId, onSelect = { AlbumRepository.selectTarget(it) })
         },
         serverMenu = {
             AppMenuDropdown(onSettings = onNavigateToSettings, onLogout = onLogout)

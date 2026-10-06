@@ -30,8 +30,8 @@ import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Slideshow
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.ViewComfy
 import androidx.compose.material.icons.filled.Visibility
@@ -42,6 +42,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -127,22 +128,51 @@ fun GalleryTopBar(
                     }
                 }
                 else -> {
-                    // In an album, its own sort order gets a button of its own
-                    if (uiState.isInAlbum) ItemSortMenu(uiState.sortOrder, viewModel::setSortOrder)
-                    ViewMenu(uiState, viewModel, onSlideshow)
+                    // Sort, view mode and slideshow each have a button of their own
+                    ItemSortMenu(uiState.sortOrder, viewModel::setSortOrder)
+                    ViewModeMenu(uiState.viewMode, viewModel::setViewMode)
+                    IconButton(onClick = onSlideshow, enabled = uiState.items.isNotEmpty()) {
+                        Icon(Icons.Default.Slideshow, contentDescription = stringResource(R.string.gallery_slideshow))
+                    }
                     if (uiState.isInAlbum) {
                         IconButton(onClick = dialogs.onEditAlbum) {
                             Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.gallery_edit_album))
                         }
                     }
-                    SelectButton(viewModel)
+                    if (uiState.canReorder) MoveModeButton(uiState.isMoveMode, viewModel::toggleMoveMode)
+                    if (!uiState.isMoveMode) SelectButton(viewModel)
                 }
             }
             if (!uiState.isSelectionMode) {
-                AppMenuDropdown(onSettings = onNavigateToSettings, onLogout = onLogout)
+                AppMenuDropdown(
+                    onNavigate = onNavigateToSettings,
+                    onLogout = onLogout,
+                    // Clean up duplicates (output folder itself vs its folders); not in the trash
+                    extraItems = if (uiState.section == GallerySection.TRASH) null else { close ->
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.gallery_clean_duplicates)) },
+                            onClick = {
+                                close()
+                                viewModel.findDuplicates()
+                            },
+                            leadingIcon = { Icon(Icons.Default.CleaningServices, contentDescription = null) }
+                        )
+                    }
+                )
             }
         }
     )
+}
+
+/** Move mode on/off: tap an image, then move it with the arrows on it. */
+@Composable
+private fun MoveModeButton(isOn: Boolean, onToggle: () -> Unit) {
+    IconButton(
+        onClick = onToggle,
+        colors = if (isOn) IconButtonDefaults.filledTonalIconButtonColors() else IconButtonDefaults.iconButtonColors()
+    ) {
+        Icon(Icons.Default.SwapHoriz, contentDescription = stringResource(R.string.gallery_move_mode))
+    }
 }
 
 @Composable
@@ -212,11 +242,10 @@ private val ITEM_SORT_ORDERS = listOf(
     GallerySortOrder.NEWEST to R.string.gallery_sort_newest,
     GallerySortOrder.OLDEST to R.string.gallery_sort_oldest,
     GallerySortOrder.NAME to R.string.gallery_sort_name,
-    GallerySortOrder.TYPE to R.string.gallery_sort_type,
-    GallerySortOrder.CUSTOM to R.string.gallery_sort_custom
+    GallerySortOrder.TYPE to R.string.gallery_sort_type
 )
 
-/** Order of the items in an open album. */
+/** Order of the items (an open album can have its own). */
 @Composable
 private fun ItemSortMenu(selected: GallerySortOrder, onSelect: (GallerySortOrder) -> Unit) {
     Box {
@@ -239,58 +268,24 @@ private fun ItemSortMenu(selected: GallerySortOrder, onSelect: (GallerySortOrder
     }
 }
 
-/**
- * One menu for slideshow, duplicate cleanup, view mode and (outside albums) sort order
- * (keeps room for the tabs).
- */
+/** Grid layout: number of columns, original ratio or a single column. Shows the current one. */
 @Composable
-private fun ViewMenu(uiState: GalleryUiState, viewModel: GalleryViewModel, onSlideshow: () -> Unit) {
+private fun ViewModeMenu(selected: GalleryViewMode, onSelect: (GalleryViewMode) -> Unit) {
     Box {
         var expanded by remember { mutableStateOf(false) }
         IconButton(onClick = { expanded = true }) {
-            Icon(Icons.Default.Tune, contentDescription = stringResource(R.string.gallery_view_mode))
+            Icon(selected.icon, contentDescription = stringResource(R.string.gallery_view_mode))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.gallery_slideshow)) },
-                onClick = {
-                    expanded = false
-                    onSlideshow()
-                },
-                enabled = uiState.items.isNotEmpty(),
-                leadingIcon = { Icon(Icons.Default.Slideshow, contentDescription = null) }
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.gallery_clean_duplicates)) },
-                onClick = {
-                    expanded = false
-                    viewModel.findDuplicates()
-                },
-                leadingIcon = { Icon(Icons.Default.CleaningServices, contentDescription = null) }
-            )
-            HorizontalDivider()
             GalleryViewMode.entries.forEach { mode ->
                 DropdownMenuItem(
                     text = { Text(stringResource(mode.label)) },
                     onClick = {
-                        viewModel.setViewMode(mode)
+                        onSelect(mode)
                         expanded = false
                     },
                     leadingIcon = { Icon(mode.icon, contentDescription = null) },
-                    trailingIcon = { if (mode == uiState.viewMode) Icon(Icons.Default.Check, contentDescription = null) }
-                )
-            }
-            if (uiState.isInAlbum) return@DropdownMenu
-            HorizontalDivider()
-            ITEM_SORT_ORDERS.forEach { (order, labelRes) ->
-                DropdownMenuItem(
-                    text = { Text(stringResource(labelRes)) },
-                    onClick = {
-                        viewModel.setSortOrder(order)
-                        expanded = false
-                    },
-                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = null) },
-                    trailingIcon = { if (uiState.sortOrder == order) Icon(Icons.Default.Check, contentDescription = null) }
+                    trailingIcon = { if (mode == selected) Icon(Icons.Default.Check, contentDescription = null) }
                 )
             }
         }

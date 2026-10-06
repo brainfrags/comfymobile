@@ -7,8 +7,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -19,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import sh.hnet.comfychair.MediaViewerActivity
 import sh.hnet.comfychair.R
 import sh.hnet.comfychair.cache.ActiveView
@@ -29,6 +33,7 @@ import sh.hnet.comfychair.storage.GalleryAlbum
 import sh.hnet.comfychair.ui.components.gallery.AddToAlbumDialog
 import sh.hnet.comfychair.ui.components.gallery.AlbumGrid
 import sh.hnet.comfychair.ui.components.gallery.AlbumNameDialog
+import sh.hnet.comfychair.ui.components.gallery.DeleteAlbumDialog
 import sh.hnet.comfychair.ui.components.gallery.ConfirmDeleteDialog
 import sh.hnet.comfychair.ui.components.gallery.GalleryGrid
 import sh.hnet.comfychair.ui.components.gallery.GalleryTopBar
@@ -107,6 +112,9 @@ fun GalleryScreen(
     var showNewAlbumDialog by remember { mutableStateOf(false) }
     var showAddToAlbumDialog by remember { mutableStateOf(false) }
     var editingAlbum by remember { mutableStateOf<GalleryAlbum?>(null) }
+    // From an album's hold menu on the album list
+    var renamingAlbum by remember { mutableStateOf<GalleryAlbum?>(null) }
+    var deletingAlbum by remember { mutableStateOf<GalleryAlbum?>(null) }
     var showEmptyTrashDialog by remember { mutableStateOf(false) }
     var showDeleteForeverDialog by remember { mutableStateOf(false) }
 
@@ -133,9 +141,23 @@ fun GalleryScreen(
             HorizontalDivider()
         }
 
-        // Back: leave selection mode, then the opened album
-        BackHandler(enabled = uiState.isSelectionMode || uiState.isInAlbum) {
-            if (uiState.isSelectionMode) galleryViewModel.clearSelection() else galleryViewModel.selectAlbum(null)
+        // Move mode: how it works, until an image is picked
+        if (uiState.isMoveMode && uiState.movingKey == null) {
+            Text(
+                text = stringResource(R.string.gallery_move_hint),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+        }
+
+        // Back: leave move mode or selection mode, then the opened album
+        BackHandler(enabled = uiState.isMoveMode || uiState.isSelectionMode || uiState.isInAlbum) {
+            when {
+                uiState.isMoveMode -> galleryViewModel.toggleMoveMode()
+                uiState.isSelectionMode -> galleryViewModel.clearSelection()
+                else -> galleryViewModel.selectAlbum(null)
+            }
         }
 
         if (uiState.isAlbumList) {
@@ -147,7 +169,10 @@ fun GalleryScreen(
                 onOpen = galleryViewModel::selectAlbum,
                 onNewAlbum = { showNewAlbumDialog = true },
                 onReorderStart = galleryViewModel::beginAlbumReorder,
-                onMove = galleryViewModel::moveAlbum
+                onMove = galleryViewModel::moveAlbum,
+                onRename = { renamingAlbum = it },
+                onToggleHidden = { galleryViewModel.setAlbumHidden(it.id, hidden = it.id !in uiState.hiddenAlbumIds) },
+                onDelete = { deletingAlbum = it }
             )
         } else {
             GalleryGrid(
@@ -156,8 +181,8 @@ fun GalleryScreen(
                 onOpen = { key -> launchMediaViewer(key) },
                 onToggleSelection = galleryViewModel::toggleSelection,
                 onSelectionChange = galleryViewModel::setSelection,
-                onReorderStart = galleryViewModel::beginReorder,
-                onMove = galleryViewModel::moveItem,
+                onPick = galleryViewModel::pickForMove,
+                onMoveStep = galleryViewModel::moveStep,
                 onRefresh = galleryViewModel::manualRefresh
             )
         }
@@ -195,6 +220,30 @@ fun GalleryScreen(
                 galleryViewModel.setAlbumHidden(album.id, hidden = album.id !in uiState.hiddenAlbumIds)
                 editingAlbum = null
             }
+        )
+    }
+
+    renamingAlbum?.let { album ->
+        AlbumNameDialog(
+            title = stringResource(R.string.workflow_menu_rename),
+            initialName = album.name,
+            confirmLabel = stringResource(R.string.button_save),
+            onConfirm = { name ->
+                galleryViewModel.renameAlbum(album.id, name)
+                renamingAlbum = null
+            },
+            onDismiss = { renamingAlbum = null }
+        )
+    }
+
+    deletingAlbum?.let { album ->
+        DeleteAlbumDialog(
+            albumName = album.name,
+            onConfirm = {
+                galleryViewModel.deleteAlbum(album.id)
+                deletingAlbum = null
+            },
+            onDismiss = { deletingAlbum = null }
         )
     }
 

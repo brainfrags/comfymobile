@@ -3,6 +3,7 @@ package sh.hnet.comfychair
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -1243,6 +1244,26 @@ class ComfyUIClient(
                 }
             }
         })
+    }
+
+    /**
+     * When a file on the server was last modified (ms since epoch), from the Last-Modified
+     * header of /view (HEAD request: nothing is downloaded). Blocking.
+     * @return The time, 0 if the server answered without one, null if it could not be reached
+     */
+    fun fetchFileTime(filename: String, subfolder: String = "", type: String = "output"): Long? {
+        val url = getBaseUrl()?.let { "$it/view".toHttpUrlOrNull() }?.newBuilder()
+            ?.addQueryParameter("filename", filename)
+            ?.addQueryParameter("subfolder", subfolder)
+            ?.addQueryParameter("type", type)
+            ?.build() ?: return null
+        return try {
+            httpClient.newCall(Request.Builder().url(url).head().build()).execute().use { response ->
+                if (response.isSuccessful) response.headers.getDate("Last-Modified")?.time ?: 0L else 0L
+            }
+        } catch (e: IOException) {
+            null
+        }
     }
 
     /**
